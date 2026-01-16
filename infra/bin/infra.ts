@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
-import { InfraStack } from '../lib/infra-stack';
+import { UserStack } from '../lib/user-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 
 const app = new cdk.App();
@@ -27,8 +27,7 @@ if (githubOrg && githubRepo) {
   });
 }
 
-// Main Infrastructure Stack
-new InfraStack(app, 'safewalk-infra-stack', {
+new UserStack(app, 'safewalk-user-stack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
