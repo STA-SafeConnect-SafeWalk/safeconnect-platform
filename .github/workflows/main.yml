@@ -62,10 +62,13 @@ jobs:
     name: Deploy Infrastructure
     needs: [check-pr-title]
     if: |
-      always() &&
+      github.event_name != 'pull_request' &&
       (needs.check-pr-title.result == 'success' || needs.check-pr-title.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Deploy Infrastructure
         uses: ./.github/actions/deploy-infra
         with:
