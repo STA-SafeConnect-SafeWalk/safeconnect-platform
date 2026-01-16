@@ -1,0 +1,58 @@
+name: 'Deploy Infrastructure'
+description: 'Deploy CDK infrastructure stacks to AWS'
+
+inputs:
+  aws-account-id:
+    description: 'AWS Account ID'
+    required: true
+  aws-region:
+    description: 'AWS Region'
+    required: true
+    default: 'eu-central-1'
+  node-version:
+    description: 'Node.js version'
+    required: false
+    default: '20'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+        cache-dependency-path: infra/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: infra
+      run: npm ci
+
+    - name: Build TypeScript
+      shell: bash
+      working-directory: infra
+      run: npm run build
+
+    - name: Run tests
+      shell: bash
+      working-directory: infra
+      run: npm test
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/github-actions-deployment-role
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: CDK Diff
+      if: github.event_name == 'pull_request'
+      shell: bash
+      working-directory: infra
+      run: npx cdk diff safewalk-user-stack
+
+    - name: CDK Deploy
+      if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      shell: bash
+      working-directory: infra
+      run: npx cdk deploy safewalk-user-stack --require-approval never
