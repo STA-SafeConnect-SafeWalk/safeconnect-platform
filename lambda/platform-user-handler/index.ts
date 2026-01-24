@@ -6,10 +6,9 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 const client = new DynamoDBClient({});
 const ddbDocClient = DynamoDBDocumentClient.from(client);
 
-const TABLE_NAME = process.env.TABLE_NAME!;
+// const TABLE_NAME = process.env.TABLE_NAME!; // Moved to usage to allow testing overrides
 
 interface RegisterUserRequest {
-  platformId: string;
   platformUserId: string;
   email?: string;
   name?: string;
@@ -54,7 +53,7 @@ function generateSharingCode(): string {
 async function sharingCodeExists(sharingCode: string): Promise<boolean> {
   try {
     const params = {
-      TableName: TABLE_NAME,
+      TableName: process.env.TABLE_NAME!,
       IndexName: 'SharingCodeIndex',
       KeyConditionExpression: 'sharingCode = :code',
       ExpressionAttributeValues: {
@@ -91,10 +90,28 @@ export const handler = async (
 
   try {
     const body: RegisterUserRequest = JSON.parse(event.body || '{}');
-    const { platformId, platformUserId, email, name } = body;
+    const { platformUserId, email, name } = body;
+
+    // Get platformId from authorizer context
+    const requestContext = event.requestContext as any;
+    const authorizerContext = requestContext.authorizer?.lambda;
+    const platformId = authorizerContext?.platformId as string;
+
+    if (!platformId) {
+      return {
+        statusCode: 401,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          error: 'Unauthorized',
+          message: 'Invalid platform authentication',
+        }),
+      };
+    }
 
     // Validate required fields
-    if (!platformId || !platformUserId) {
+    if (!platformUserId) {
       return {
         statusCode: 400,
         headers: {
@@ -102,7 +119,7 @@ export const handler = async (
         },
         body: JSON.stringify({
           error: 'Missing required fields',
-          message: 'platformId and platformUserId are required',
+          message: 'platformUserId is required',
         }),
       };
     }
@@ -123,7 +140,7 @@ export const handler = async (
     };
 
     const params = {
-      TableName: TABLE_NAME,
+      TableName: process.env.TABLE_NAME!,
       Item: userRecord,
       ConditionExpression: 'attribute_not_exists(safeWalkId)',
     };
