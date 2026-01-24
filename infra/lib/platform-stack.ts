@@ -10,20 +10,12 @@ import * as path from 'path';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { RetentionDays } from 'aws-cdk-lib/aws-logs';
 
-export interface PlatformStackProps extends cdk.StackProps {
-  /**
-   * Optional admin API key for protecting admin endpoints.
-   * If not provided, admin endpoints will be unprotected (not recommended for production).
-   */
-  readonly adminApiKey?: string;
-}
-
 export class PlatformStack extends cdk.Stack {
   public readonly httpApi: apigateway.HttpApi;
   public readonly platformAuthorizer: apigateway.IHttpRouteAuthorizer;
   public readonly platformsTable: dynamodb.Table;
 
-  constructor(scope: Construct, id: string, props?: PlatformStackProps) {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     this.platformsTable = new dynamodb.Table(this, 'platforms-table', {

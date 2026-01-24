@@ -6,8 +6,6 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 const client = new DynamoDBClient({});
 const ddbDocClient = DynamoDBDocumentClient.from(client);
 
-// const TABLE_NAME = process.env.TABLE_NAME!; // Moved to usage to allow testing overrides
-
 interface RegisterUserRequest {
   platformUserId: string;
   email?: string;
