@@ -6,9 +6,16 @@ import * as apigatewayIntegrations from 'aws-cdk-lib/aws-apigatewayv2-integratio
 import { Construct } from 'constructs';
 import * as path from 'path';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { RetentionDays } from 'aws-cdk-lib/aws-logs';
+
+import { PlatformStack } from './platform-stack';
+
+export interface UserStackProps extends cdk.StackProps {
+  platformStack: PlatformStack;
+}
 
 export class UserStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: UserStackProps) {
     super(scope, id, props);
 
     const platformUsersTable = new dynamodb.Table(this, 'platform-users-table', {
@@ -18,7 +25,7 @@ export class UserStack extends cdk.Stack {
         type: dynamodb.AttributeType.STRING,
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
       pointInTimeRecovery: true,
     });
 
@@ -31,44 +38,30 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    const userProfileHandler = new NodejsFunction(this, 'platform-user-profile-handler', {
-      functionName: 'platform-user-profile-handler',
+    const userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
+      functionName: 'platform-user-handler',
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'index.handler',
-      entry: path.join(__dirname, '../../lambda/user-profile-handler/index.ts'),
+      entry: path.join(__dirname, '../../lambda/platform-user-handler/index.ts'),
       environment: {
         TABLE_NAME: platformUsersTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
+      logRetention: RetentionDays.ONE_WEEK,
     });
 
     platformUsersTable.grantReadWriteData(userProfileHandler);
-
-    const httpApi = new apigateway.HttpApi(this, 'platform-user-api', {
-      apiName: 'safewalk-platform-user-api',
-      description: 'SafeWalk Platform User Registration API',
-      corsPreflight: {
-        allowOrigins: ['*'],
-        allowMethods: [apigateway.CorsHttpMethod.POST, apigateway.CorsHttpMethod.GET],
-        allowHeaders: ['Content-Type', 'Authorization'],
-      },
-    });
 
     const lambdaIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'platform-user-profile-integration',
       userProfileHandler
     );
 
-    httpApi.addRoutes({
+    props.platformStack.addProtectedRoute('RegisterUserRoute', {
       path: '/register',
       methods: [apigateway.HttpMethod.POST],
       integration: lambdaIntegration,
-    });
-
-    new cdk.CfnOutput(this, 'api-url', {
-      value: httpApi.apiEndpoint,
-      description: 'HTTP API Gateway endpoint URL',
     });
 
     new cdk.CfnOutput(this, 'table-name', {

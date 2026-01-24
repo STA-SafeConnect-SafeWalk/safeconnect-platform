@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { UserStack } from '../lib/user-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
+import { PlatformStack } from '../lib/platform-stack';
 
 const app = new cdk.App();
 
@@ -27,9 +28,18 @@ if (githubOrg && githubRepo) {
   });
 }
 
-new UserStack(app, 'safewalk-user-stack', {
+const platformStack = new PlatformStack(app, 'safewalk-platform-stack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
   },
+  description: 'Platform registration and central API Gateway with custom authorizer',
+});
+
+new UserStack(app, 'safewalk-platform-user-stack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION,
+  },
+  platformStack,
 });
