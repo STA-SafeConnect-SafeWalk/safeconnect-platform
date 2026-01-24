@@ -89,7 +89,7 @@ Positive response after successful validation:
   "data": {
     "platformId": "uuid",
     "platformName": "Partner Platform Name",
-    "apiKey": "sw_abc123...",  // Only shown once!
+    "apiKey": "sw_abc123...", # Only shown once!
     "apiKeyPrefix": "sw_abc123...",
     "redirectUrl": "https://partner.app/callback",
     "status": "ACTIVE",
@@ -163,7 +163,7 @@ The request body may look like this:
 ```
 
 Expect the following OK-response on successful validation:
-```
+```json
 {
   "success": true,
   "data": {
