@@ -7,19 +7,21 @@ import { PlatformStack } from '../lib/platform-stack';
 const app = new cdk.App();
 
 const githubOrg = app.node.tryGetContext('githubOrg') || process.env.GITHUB_ORG;
-const githubRepo = app.node.tryGetContext('githubRepo') || process.env.GITHUB_REPO;
+const githubAppRepo = app.node.tryGetContext('githubAppRepo') || process.env.GITHUB_APP_REPO;
+const githubPlatformRepo = app.node.tryGetContext('githubPlatformRepo') || process.env.GITHUB_PLATFORM_REPO;
 
-if (!githubOrg || !githubRepo) {
+if (!githubOrg || !githubAppRepo || !githubPlatformRepo) {
   console.warn(
     'Warning: githubOrg and githubRepo not provided. The pipeline stack will not be created.\n' +
-    'Provide them via context: cdk deploy -c githubOrg=<org> -c githubRepo=<repo>'
+    'Provide them via context: cdk deploy -c githubOrg=<org> -c githubAppRepo=<repo> -c githubPlatformRepo=<repo>'
   );
 }
 
-if (githubOrg && githubRepo) {
+if (githubOrg && githubAppRepo && githubPlatformRepo) {
   new PipelineStack(app, 'safewalk-pipeline-stack', {
     githubOrg,
-    githubRepo,
+    githubAppRepo,
+    githubPlatformRepo,
     env: {
       account: process.env.CDK_DEFAULT_ACCOUNT,
       region: process.env.CDK_DEFAULT_REGION,

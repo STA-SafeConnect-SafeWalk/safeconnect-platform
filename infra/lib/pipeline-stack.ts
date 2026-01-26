@@ -9,9 +9,14 @@ export interface PipelineStackProps extends cdk.StackProps {
   readonly githubOrg: string;
 
   /**
-   * The GitHub repository name
+   * The GitHub repository name for the application
    */
-  readonly githubRepo: string;
+  readonly githubAppRepo: string;
+
+  /**
+   * The GitHub repository name for the platform
+   */
+  readonly githubPlatformRepo: string;
 }
 
 export class PipelineStack extends cdk.Stack {
@@ -23,7 +28,7 @@ export class PipelineStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: PipelineStackProps) {
     super(scope, id, props);
 
-    const { githubOrg, githubRepo } = props;
+    const { githubOrg, githubAppRepo, githubPlatformRepo } = props;
 
     const githubOidcProvider = new iam.OpenIdConnectProvider(this, 'github-oidc-provider', {
       url: 'https://token.actions.githubusercontent.com',
@@ -39,7 +44,9 @@ export class PipelineStack extends cdk.Stack {
             'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
           },
           StringLike: {
-            'token.actions.githubusercontent.com:sub': `repo:${githubOrg}/${githubRepo}:ref:refs/heads/main`,
+            'token.actions.githubusercontent.com:sub': [
+              `repo:${githubOrg}/${githubAppRepo}:ref:refs/heads/main`,
+              `repo:${githubOrg}/${githubPlatformRepo}:ref:refs/heads/main`,]
           },
         }
       ),
