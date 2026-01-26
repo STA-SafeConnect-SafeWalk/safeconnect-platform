@@ -45,14 +45,26 @@ runs:
         role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/github-actions-deployment-role
         aws-region: ${{ inputs.aws-region }}
 
-    - name: CDK Diff
+    - name: CDK Diff Platform
       if: github.event_name == 'pull_request'
       shell: bash
       working-directory: infra
-      run: npx cdk diff safewalk-user-stack
+      run: npx cdk diff safewalk-platform-stack
 
-    - name: CDK Deploy
+    - name: CDK Deploy Platform
       if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
       shell: bash
       working-directory: infra
-      run: npx cdk deploy safewalk-user-stack --require-approval never
+      run: npx cdk deploy safewalk-platform-stack --require-approval never
+
+    - name: CDK Diff Platform User
+      if: github.event_name == 'pull_request'
+      shell: bash
+      working-directory: infra
+      run: npx cdk diff safewalk-platform-user-stack
+
+    - name: CDK Deploy Platform User
+      if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      shell: bash
+      working-directory: infra
+      run: npx cdk deploy safewalk-platform-user-stack --require-approval never
