@@ -38,6 +38,19 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    platformUsersTable.addGlobalSecondaryIndex({
+      indexName: 'PlatformUserIndex',
+      partitionKey: {
+        name: 'platformId',
+        type: dynamodb.AttributeType.STRING,
+      },
+      sortKey: {
+        name: 'platformUserId',
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
     const userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
       functionName: 'platform-user-handler',
       runtime: lambda.Runtime.NODEJS_24_X,
