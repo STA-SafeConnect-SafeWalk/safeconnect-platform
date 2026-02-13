@@ -122,6 +122,30 @@ export const handler = async (
       };
     }
 
+    const existingUserParams = {
+      TableName: process.env.TABLE_NAME!,
+      IndexName: 'PlatformUserIndex',
+      KeyConditionExpression: 'platformId = :pid AND platformUserId = :puid',
+      ExpressionAttributeValues: {
+        ':pid': platformId,
+        ':puid': platformUserId,
+      },
+      Limit: 1,
+    };
+    const existingUserResult = await ddbDocClient.send(new QueryCommand(existingUserParams));
+    if (existingUserResult.Items && existingUserResult.Items.length > 0) {
+      return {
+        statusCode: 409,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          error: 'Conflict',
+          message: 'User with this platformId and platformUserId already exists',
+        }),
+      };
+    }
+
     const safeWalkId = randomUUID();
     const sharingCode = await generateUniqueSharingCode();
     const timestamp = new Date().toISOString();
