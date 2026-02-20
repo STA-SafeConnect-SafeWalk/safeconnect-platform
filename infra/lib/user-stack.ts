@@ -15,10 +15,12 @@ export interface UserStackProps extends cdk.StackProps {
 }
 
 export class UserStack extends cdk.Stack {
+  public readonly platformUsersTable: dynamodb.Table;
+
   constructor(scope: Construct, id: string, props: UserStackProps) {
     super(scope, id, props);
 
-    const platformUsersTable = new dynamodb.Table(this, 'platform-users-table', {
+    this.platformUsersTable = new dynamodb.Table(this, 'platform-users-table', {
       tableName: 'PlatformUsers',
       partitionKey: {
         name: 'safeWalkId',
@@ -29,7 +31,7 @@ export class UserStack extends cdk.Stack {
       pointInTimeRecovery: true,
     });
 
-    platformUsersTable.addGlobalSecondaryIndex({
+    this.platformUsersTable.addGlobalSecondaryIndex({
       indexName: 'SharingCodeIndex',
       partitionKey: {
         name: 'sharingCode',
@@ -38,7 +40,7 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    platformUsersTable.addGlobalSecondaryIndex({
+    this.platformUsersTable.addGlobalSecondaryIndex({
       indexName: 'PlatformUserIndex',
       partitionKey: {
         name: 'platformId',
@@ -57,14 +59,14 @@ export class UserStack extends cdk.Stack {
       handler: 'index.handler',
       entry: path.join(__dirname, '../../lambda/platform-user-handler/index.ts'),
       environment: {
-        TABLE_NAME: platformUsersTable.tableName,
+        TABLE_NAME: this.platformUsersTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
       logRetention: RetentionDays.ONE_WEEK,
     });
 
-    platformUsersTable.grantReadWriteData(userProfileHandler);
+    this.platformUsersTable.grantReadWriteData(userProfileHandler);
 
     const lambdaIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'platform-user-profile-integration',
@@ -78,7 +80,7 @@ export class UserStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'table-name', {
-      value: platformUsersTable.tableName,
+      value: this.platformUsersTable.tableName,
       description: 'DynamoDB table name',
     });
 

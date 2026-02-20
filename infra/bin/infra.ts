@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib/core';
 import { UserStack } from '../lib/user-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { PlatformStack } from '../lib/platform-stack';
+import { TrustedContactsStack } from '../lib/trusted-contacts-stack';
 
 const app = new cdk.App();
 
@@ -38,10 +39,20 @@ const platformStack = new PlatformStack(app, 'safewalk-platform-stack', {
   description: 'Platform registration and central API Gateway with custom authorizer',
 });
 
-new UserStack(app, 'safewalk-platform-user-stack', {
+const userStack = new UserStack(app, 'safewalk-platform-user-stack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
   },
   platformStack,
+});
+
+new TrustedContactsStack(app, 'safewalk-trusted-contacts-stack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION,
+  },
+  platformStack,
+  usersTable: userStack.platformUsersTable,
+  platformsTableName: 'SafeWalkPlatforms',
 });
