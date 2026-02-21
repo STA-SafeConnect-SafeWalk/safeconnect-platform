@@ -54,5 +54,6 @@ new TrustedContactsStack(app, 'safewalk-trusted-contacts-stack', {
   },
   platformStack,
   usersTable: userStack.platformUsersTable,
+  sharingCodesTable: userStack.sharingCodesTable,
   platformsTableName: 'SafeWalkPlatforms',
 });

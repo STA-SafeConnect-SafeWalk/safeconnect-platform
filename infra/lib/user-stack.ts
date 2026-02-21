@@ -16,6 +16,7 @@ export interface UserStackProps extends cdk.StackProps {
 
 export class UserStack extends cdk.Stack {
   public readonly platformUsersTable: dynamodb.Table;
+  public readonly sharingCodesTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: UserStackProps) {
     super(scope, id, props);
@@ -32,15 +33,6 @@ export class UserStack extends cdk.Stack {
     });
 
     this.platformUsersTable.addGlobalSecondaryIndex({
-      indexName: 'SharingCodeIndex',
-      partitionKey: {
-        name: 'sharingCode',
-        type: dynamodb.AttributeType.STRING,
-      },
-      projectionType: dynamodb.ProjectionType.ALL,
-    });
-
-    this.platformUsersTable.addGlobalSecondaryIndex({
       indexName: 'PlatformUserIndex',
       partitionKey: {
         name: 'platformId',
@@ -53,6 +45,26 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    this.sharingCodesTable = new dynamodb.Table(this, 'sharing-codes-table', {
+      tableName: 'SharingCodes',
+      partitionKey: {
+        name: 'safeWalkId',
+        type: dynamodb.AttributeType.STRING,
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      timeToLiveAttribute: 'ttl',
+    });
+
+    this.sharingCodesTable.addGlobalSecondaryIndex({
+      indexName: 'SharingCodeIndex',
+      partitionKey: {
+        name: 'sharingCode',
+        type: dynamodb.AttributeType.STRING,
+      },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
     const userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
       functionName: 'platform-user-handler',
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -60,6 +72,7 @@ export class UserStack extends cdk.Stack {
       entry: path.join(__dirname, '../../lambda/platform-user-handler/index.ts'),
       environment: {
         TABLE_NAME: this.platformUsersTable.tableName,
+        SHARING_CODES_TABLE_NAME: this.sharingCodesTable.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
@@ -67,6 +80,7 @@ export class UserStack extends cdk.Stack {
     });
 
     this.platformUsersTable.grantReadWriteData(userProfileHandler);
+    this.sharingCodesTable.grantReadWriteData(userProfileHandler);
 
     const lambdaIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'platform-user-profile-integration',
@@ -79,9 +93,20 @@ export class UserStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    props.platformStack.addProtectedRoute('GenerateSharingCodeRoute', {
+      path: '/sharing-codes',
+      methods: [apigateway.HttpMethod.POST],
+      integration: lambdaIntegration,
+    });
+
     new cdk.CfnOutput(this, 'table-name', {
       value: this.platformUsersTable.tableName,
       description: 'DynamoDB table name',
+    });
+
+    new cdk.CfnOutput(this, 'sharing-codes-table-name', {
+      value: this.sharingCodesTable.tableName,
+      description: 'Sharing codes DynamoDB table name',
     });
 
     new cdk.CfnOutput(this, 'lambda-function-name', {
