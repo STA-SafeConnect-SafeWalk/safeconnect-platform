@@ -26,6 +26,28 @@ function buildEvent(overrides: Record<string, any> = {}) {
   return { ...mockPlatformContext, ...overrides } as any;
 }
 
+/** Helper: returns a valid (non-expired) sharing code record */
+function validSharingCodeRecord(safeWalkId: string, code: string) {
+  const now = new Date();
+  return {
+    safeWalkId,
+    sharingCode: code,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+/** Helper: returns an expired sharing code record */
+function expiredSharingCodeRecord(safeWalkId: string, code: string) {
+  const past = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
+  return {
+    safeWalkId,
+    sharingCode: code,
+    createdAt: new Date(past.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: past.toISOString(),
+  };
+}
+
 describe('trusted-contacts-handler', () => {
   const originalEnv = process.env;
 
@@ -35,6 +57,7 @@ describe('trusted-contacts-handler', () => {
       ...originalEnv,
       CONTACTS_TABLE_NAME: 'TestContacts',
       USERS_TABLE_NAME: 'TestUsers',
+      SHARING_CODES_TABLE_NAME: 'TestSharingCodes',
       PLATFORMS_TABLE_NAME: 'TestPlatforms',
     };
   });
@@ -105,11 +128,11 @@ describe('trusted-contacts-handler', () => {
     expect(body.message).toContain('Requester');
   });
 
-  it('should return 404 if sharing code resolves to no user', async () => {
+  it('should return 404 if sharing code resolves to no record', async () => {
     ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({
       Item: { safeWalkId: 'user-1', platformId: 'platform-abc' },
     });
-    ddbMock.on(QueryCommand, { TableName: 'TestUsers' }).resolves({ Items: [] });
+    ddbMock.on(QueryCommand, { TableName: 'TestSharingCodes' }).resolves({ Items: [] });
 
     const event = buildEvent({
       rawPath: '/contacts',
@@ -129,12 +152,39 @@ describe('trusted-contacts-handler', () => {
     expect(body.message).toContain('sharing code');
   });
 
+  it('should return 410 if sharing code has expired', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({
+      Item: { safeWalkId: 'user-1', platformId: 'platform-abc' },
+    });
+    ddbMock.on(QueryCommand, { TableName: 'TestSharingCodes' }).resolves({
+      Items: [expiredSharingCodeRecord('user-2', 'EXPIRE')],
+    });
+
+    const event = buildEvent({
+      rawPath: '/contacts',
+      body: JSON.stringify({
+        requesterSafeWalkId: 'user-1',
+        sharingCode: 'EXPIRE',
+      }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'POST' },
+      },
+    });
+
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(410);
+    const body = JSON.parse(result.body as string);
+    expect(body.error).toBe('Gone');
+    expect(body.message).toContain('expired');
+  });
+
   it('should return 400 when a user tries to add themselves', async () => {
     ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({
       Item: { safeWalkId: 'user-1' },
     });
-    ddbMock.on(QueryCommand, { TableName: 'TestUsers' }).resolves({
-      Items: [{ safeWalkId: 'user-1', sharingCode: 'SELF00' }],
+    ddbMock.on(QueryCommand, { TableName: 'TestSharingCodes' }).resolves({
+      Items: [validSharingCodeRecord('user-1', 'SELF00')],
     });
 
     const event = buildEvent({
@@ -159,9 +209,9 @@ describe('trusted-contacts-handler', () => {
     ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({
       Item: { safeWalkId: 'user-1' },
     });
-    ddbMock
-      .on(QueryCommand, { TableName: 'TestUsers' })
-      .resolves({ Items: [{ safeWalkId: 'user-2', sharingCode: 'TARGET' }] });
+    ddbMock.on(QueryCommand, { TableName: 'TestSharingCodes' }).resolves({
+      Items: [validSharingCodeRecord('user-2', 'TARGET')],
+    });
 
     ddbMock
       .on(QueryCommand, { TableName: 'TestContacts' })
@@ -187,9 +237,9 @@ describe('trusted-contacts-handler', () => {
     ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({
       Item: { safeWalkId: 'user-1' },
     });
-    ddbMock
-      .on(QueryCommand, { TableName: 'TestUsers' })
-      .resolves({ Items: [{ safeWalkId: 'user-2', sharingCode: 'TARGET' }] });
+    ddbMock.on(QueryCommand, { TableName: 'TestSharingCodes' }).resolves({
+      Items: [validSharingCodeRecord('user-2', 'TARGET')],
+    });
     ddbMock.on(QueryCommand, { TableName: 'TestContacts' }).resolves({ Items: [] });
     ddbMock.on(GetCommand, { TableName: 'TestPlatforms' }).resolves({
       Item: { platformId: 'platform-abc', webhookUrl: 'https://example.com/webhook' },

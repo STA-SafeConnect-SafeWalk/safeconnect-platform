@@ -149,28 +149,152 @@ Note the data model used for 3rd party apps.
 ## Platform Usage as a 3rd Party App
 The following section describes the interaction with the platform as a 3rd party platform/application.
 
+### Authorization
+To authorize all of the requests described in this section, the API Key for the platform needs to be used by setting the header ```x-api-key: <API_Key>```
+
 ### Register a User for the Platform
-In order to register one of your platform's users for the vendor-independent SW platform, you may send a ```POST``` request to ```safewalk-platform-stack.apiendpoint```
+In order to register one of your platform's users for the vendor-independent SW platform, you may send a ```POST``` request to ```safewalk-platform-stack.apiendpoint/register```
 
 The request body may look like this:
 ```json
 {
-  "platformId": "abcd1234-0000-0000-0000-abcd1234abcd",
   "platformUserId": "123456789",
-  "email": "user@example.com", # Optional
-  "name": "John User" # Optional
+  "email": "user@example.com",
+  "name": "John User"
 }
 ```
+
+Note: ```email``` and ```name``` are optional fields.
 
 Expect the following OK-response on successful validation:
 ```json
 {
   "success": true,
   "data": {
-    "safeWalkId": "12345678-1234-1234-1234-1234abcd1234",
-    "sharingCode": "ABCDEF"
+    "safeWalkId": "12345678-1234-1234-1234-1234abcd1234"
   }
 }
 ```
 
-Store these data in order to facilitate cross-platform SOS-events. The sharing code shall be forwarded to the end-user to send to his contacts and therefore facilitate 'trusted contact-requests' via their platform. This sharing code can only be processed by SafeWalk. 
+Store the ```safeWalkId``` securely. It is required for all subsequent operations concerning this user (e.g. generating sharing codes and creating trusted contacts).
+
+### Generate a Sharing Code
+Sharing codes are temporary 6-character codes that allow other users to add your user as a trusted contact. Each code is valid for **24 hours**. Generating a new code automatically invalidates any previously active code for the same user.
+
+To generate a sharing code, send a ```POST``` request to ```safewalk-platform-stack.apiendpoint/sharing-codes```
+
+The request body:
+```json
+{
+  "safeWalkId": "12345678-1234-1234-1234-1234abcd1234"
+}
+```
+
+Expect the following response:
+```json
+{
+  "success": true,
+  "data": {
+    "sharingCode": "ABCDEF",
+    "safeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+    "createdAt": "2026-02-21T12:00:00.000Z",
+    "expiresAt": "2026-02-22T12:00:00.000Z"
+  }
+}
+```
+
+The sharing code shall be forwarded to the end-user so they can share it with their contacts to facilitate trusted contact requests via their respective platforms. This sharing code can only be processed by SafeWalk.
+
+NOTE: Each new code generation replaces the previous one. Only the most recent code is valid.
+
+### Create a Trusted Contact
+To add a trusted contact relationship for one of your users, send a ```POST``` request to ```safewalk-platform-stack.apiendpoint/contacts```
+
+The request body should contain:
+```json
+{
+  "requesterSafeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+  "sharingCode": "ABCDEF"
+}
+```
+
+Expect the following response on successful creation:
+```json
+{
+  "success": true,
+  "data": {
+    "contactId": "87654321-4321-4321-4321-4321dcba4321",
+    "requesterSafeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+    "targetSafeWalkId": "98765432-9876-9876-9876-9876fedc9876",
+    "status": "ACTIVE",
+    "createdAt": "2026-02-21T..."
+  }
+}
+```
+
+The `requesterSafeWalkId` is the SafeWalk ID of your user who wants to add a contact. The `sharingCode` is the code they received from the person they want to add as a trusted contact.
+
+Possible error responses:
+- **404 Not Found** – The sharing code does not match any user.
+- **410 Gone** – The sharing code has expired. The target user must generate a new one.
+- **400 Validation Error** – A user cannot add themselves as a trusted contact.
+- **409 Conflict** – This trusted contact relationship already exists.
+
+### List Trusted Contacts
+To retrieve all active trusted contacts for a user, send a ```GET``` request to ```safewalk-platform-stack.apiendpoint/contacts/{safeWalkId}```
+
+Replace `{safeWalkId}` with the user's SafeWalk ID.
+
+Expect the following response:
+```json
+{
+  "success": true,
+  "data": {
+    "contacts": [
+      {
+        "contactId": "87654321-4321-4321-4321-4321dcba4321",
+        "requesterSafeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+        "targetSafeWalkId": "98765432-9876-9876-9876-9876fedc9876",
+        "platformId": "abcd1234-0000-0000-0000-abcd1234abcd",
+        "webhookUrl": "https://partner.app/webhook",
+        "status": "ACTIVE",
+        "createdAt": "2026-02-21T...",
+        "updatedAt": "2026-02-21T...",
+        "direction": "outgoing"
+      },
+      {
+        "contactId": "11111111-1111-1111-1111-111111111111",
+        "requesterSafeWalkId": "98765432-9876-9876-9876-9876fedc9876",
+        "targetSafeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+        "platformId": "abcd1234-0000-0000-0000-abcd1234abcd",
+        "webhookUrl": "https://partner.app/webhook",
+        "status": "ACTIVE",
+        "createdAt": "2026-02-20T...",
+        "updatedAt": "2026-02-20T...",
+        "direction": "incoming"
+      }
+    ],
+    "count": 2
+  }
+}
+```
+
+The `direction` field indicates whether the user initiated the contact relationship (`outgoing` -> receives SOS-alarms) or received it (`incoming` -> sends SOS alarms to trusted contact).
+
+### Revoke a Trusted Contact
+To revoke/remove a trusted contact relationship, send a ```DELETE``` request to ```safewalk-platform-stack.apiendpoint/contacts/{contactId}```
+
+Replace `{contactId}` with the ID of the contact relationship you want to revoke.
+
+Expect the following response:
+```json
+{
+  "success": true,
+  "data": {
+    "contactId": "87654321-4321-4321-4321-4321dcba4321",
+    "status": "REVOKED"
+  }
+}
+```
+
+Note: You can only revoke contacts that were created by your platform. Attempting to revoke a contact from another platform will result in a 403 Forbidden error. 

@@ -13,6 +13,7 @@ import { PlatformStack } from './platform-stack';
 export interface TrustedContactsStackProps extends cdk.StackProps {
   platformStack: PlatformStack;
   usersTable: dynamodb.ITable;
+  sharingCodesTable: dynamodb.ITable;
   platformsTableName: string;
 }
 
@@ -73,6 +74,7 @@ export class TrustedContactsStack extends cdk.Stack {
       environment: {
         CONTACTS_TABLE_NAME: this.trustedContactsTable.tableName,
         USERS_TABLE_NAME: props.usersTable.tableName,
+        SHARING_CODES_TABLE_NAME: props.sharingCodesTable.tableName,
         PLATFORMS_TABLE_NAME: props.platformsTableName,
       },
       timeout: cdk.Duration.seconds(30),
@@ -82,6 +84,7 @@ export class TrustedContactsStack extends cdk.Stack {
 
     this.trustedContactsTable.grantReadWriteData(trustedContactsHandler);
     props.usersTable.grantReadData(trustedContactsHandler);
+    props.sharingCodesTable.grantReadData(trustedContactsHandler);
     platformsTableRef.grantReadData(trustedContactsHandler);
 
 

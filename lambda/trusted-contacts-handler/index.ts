@@ -56,17 +56,30 @@ function hashSharingCode(code: string): string {
   return createHash('sha256').update(code.toUpperCase().trim()).digest('hex');
 }
 
-async function resolveUserBySharingCode(sharingCode: string) {
+interface SharingCodeLookupResult {
+  safeWalkId: string;
+  expired: boolean;
+}
+
+/**
+ * Look up a sharing code in the SharingCodes table and check its validity.
+ */
+async function resolveSharingCode(sharingCode: string): Promise<SharingCodeLookupResult | null> {
   const result = await ddbDocClient.send(
     new QueryCommand({
-      TableName: process.env.USERS_TABLE_NAME!,
+      TableName: process.env.SHARING_CODES_TABLE_NAME!,
       IndexName: 'SharingCodeIndex',
       KeyConditionExpression: 'sharingCode = :code',
       ExpressionAttributeValues: { ':code': sharingCode.toUpperCase().trim() },
       Limit: 1,
     })
   );
-  return result.Items && result.Items.length > 0 ? result.Items[0] : null;
+
+  if (!result.Items || result.Items.length === 0) return null;
+
+  const record = result.Items[0];
+  const expired = new Date(record.expiresAt as string) <= new Date();
+  return { safeWalkId: record.safeWalkId as string, expired };
 }
 
 async function resolveUserBySafeWalkId(safeWalkId: string) {
@@ -116,15 +129,24 @@ async function createTrustedContact(
     });
   }
 
-  const target = await resolveUserBySharingCode(sharingCode);
-  if (!target) {
+  const sharingCodeResult = await resolveSharingCode(sharingCode);
+  if (!sharingCodeResult) {
     return jsonResponse(404, {
       error: 'Not Found',
       message: 'No user found for the provided sharing code',
     });
   }
 
-  if (requester.safeWalkId === target.safeWalkId) {
+  if (sharingCodeResult.expired) {
+    return jsonResponse(410, {
+      error: 'Gone',
+      message: 'The sharing code has expired. Please request a new one.',
+    });
+  }
+
+  const targetSafeWalkId = sharingCodeResult.safeWalkId;
+
+  if (requester.safeWalkId === targetSafeWalkId) {
     return jsonResponse(400, {
       error: 'Validation Error',
       message: 'A user cannot add themselves as a trusted contact',
@@ -140,7 +162,7 @@ async function createTrustedContact(
       ExpressionAttributeNames: { '#s': 'status' },
       ExpressionAttributeValues: {
         ':rid': requester.safeWalkId,
-        ':tid': target.safeWalkId,
+        ':tid': targetSafeWalkId,
         ':pid': platformId,
         ':active': 'ACTIVE',
       },
@@ -162,7 +184,7 @@ async function createTrustedContact(
   const record: TrustedContactRecord = {
     contactId,
     requesterSafeWalkId: requester.safeWalkId,
-    targetSafeWalkId: target.safeWalkId,
+    targetSafeWalkId,
     platformId,
     webhookUrl,
     status: 'ACTIVE',
@@ -183,7 +205,7 @@ async function createTrustedContact(
     data: {
       contactId,
       requesterSafeWalkId: requester.safeWalkId,
-      targetSafeWalkId: target.safeWalkId,
+      targetSafeWalkId,
       status: 'ACTIVE',
       createdAt: timestamp,
     },
