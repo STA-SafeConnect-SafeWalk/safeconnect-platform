@@ -277,6 +277,8 @@ describe('trusted-contacts-handler', () => {
       platformId: 'platform-abc',
       webhookUrl: 'https://example.com/webhook',
       status: 'ACTIVE',
+      locationSharing: true,
+      sosSharing: true,
     });
     expect(item).toHaveProperty('sharingCodeHash');
     expect(item!.sharingCodeHash).not.toBe('TARGET'); // code is hashed, not stored raw
@@ -293,6 +295,8 @@ describe('trusted-contacts-handler', () => {
           webhookUrl: 'https://example.com/webhook',
           status: 'ACTIVE',
           sharingCodeHash: 'hash1',
+          locationSharing: true,
+          sosSharing: false,
           createdAt: '2026-01-01T00:00:00Z',
           updatedAt: '2026-01-01T00:00:00Z',
         },
@@ -309,6 +313,8 @@ describe('trusted-contacts-handler', () => {
           webhookUrl: null,
           status: 'ACTIVE',
           sharingCodeHash: 'hash2',
+          locationSharing: false,
+          sosSharing: true,
           createdAt: '2026-01-02T00:00:00Z',
           updatedAt: '2026-01-02T00:00:00Z',
         },
@@ -340,6 +346,12 @@ describe('trusted-contacts-handler', () => {
     body.data.contacts.forEach((c: any) => {
       expect(c).not.toHaveProperty('sharingCodeHash');
     });
+
+    // locationSharing and sosSharing should be present
+    expect(outgoing.locationSharing).toBe(true);
+    expect(outgoing.sosSharing).toBe(false);
+    expect(incoming.locationSharing).toBe(false);
+    expect(incoming.sosSharing).toBe(true);
   });
 
   it('should return 404 when contact does not exist', async () => {
@@ -406,5 +418,207 @@ describe('trusted-contacts-handler', () => {
 
     const updateCalls = ddbMock.commandCalls(UpdateCommand);
     expect(updateCalls.length).toBe(1);
+  });
+
+
+  it('PATCH: should return 400 when safeWalkId is missing', async () => {
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ locationSharing: true }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(400);
+    const body = JSON.parse(result.body as string);
+    expect(body.error).toBe('Validation Error');
+    expect(body.message).toContain('safeWalkId');
+  });
+
+  it('PATCH: should return 400 when no update fields are provided', async () => {
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-1' }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(400);
+    const body = JSON.parse(result.body as string);
+    expect(body.error).toBe('Validation Error');
+    expect(body.message).toContain('locationSharing');
+  });
+
+  it('PATCH: should return 404 when contact does not exist', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({ Item: undefined });
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-999',
+      pathParameters: { contactId: 'c-999' },
+      body: JSON.stringify({ safeWalkId: 'user-1', locationSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(404);
+  });
+
+  it('PATCH: should return 403 when platformId does not match', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
+      Item: {
+        contactId: 'c-1',
+        platformId: 'other-platform',
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+        status: 'ACTIVE',
+        locationSharing: true,
+        sosSharing: true,
+      },
+    });
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-1', locationSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(403);
+  });
+
+  it('PATCH: should return 403 when safeWalkId is not part of the relationship', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
+      Item: {
+        contactId: 'c-1',
+        platformId: 'platform-abc',
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+        status: 'ACTIVE',
+        locationSharing: true,
+        sosSharing: true,
+      },
+    });
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-99', locationSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(403);
+    const body = JSON.parse(result.body as string);
+    expect(body.message).toContain('not part of this contact relationship');
+  });
+
+  it('PATCH: should return 400 when contact is already revoked', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
+      Item: {
+        contactId: 'c-1',
+        platformId: 'platform-abc',
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+        status: 'REVOKED',
+        locationSharing: true,
+        sosSharing: true,
+      },
+    });
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-1', locationSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(400);
+    const body = JSON.parse(result.body as string);
+    expect(body.message).toContain('revoked');
+  });
+
+  it('PATCH: should successfully update locationSharing and sosSharing', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
+      Item: {
+        contactId: 'c-1',
+        platformId: 'platform-abc',
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+        status: 'ACTIVE',
+        locationSharing: true,
+        sosSharing: true,
+      },
+    });
+    ddbMock.on(UpdateCommand).resolves({});
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-1', locationSharing: false, sosSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body as string);
+    expect(body.success).toBe(true);
+    expect(body.data.contactId).toBe('c-1');
+    expect(body.data.locationSharing).toBe(false);
+    expect(body.data.sosSharing).toBe(false);
+    expect(body.data).toHaveProperty('updatedAt');
+
+    const updateCalls = ddbMock.commandCalls(UpdateCommand);
+    expect(updateCalls.length).toBe(1);
+    const input = updateCalls[0].args[0].input;
+    expect(input.UpdateExpression).toContain('locationSharing');
+    expect(input.UpdateExpression).toContain('sosSharing');
+  });
+
+  it('PATCH: should allow target user to update the contact', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
+      Item: {
+        contactId: 'c-1',
+        platformId: 'platform-abc',
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+        status: 'ACTIVE',
+        locationSharing: true,
+        sosSharing: true,
+      },
+    });
+    ddbMock.on(UpdateCommand).resolves({});
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-2', sosSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body as string);
+    expect(body.data.sosSharing).toBe(false);
+    expect(body.data.locationSharing).toBe(true); 
   });
 });

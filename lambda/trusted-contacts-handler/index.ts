@@ -25,8 +25,16 @@ interface TrustedContactRecord {
   webhookUrl: string | null;
   status: 'ACTIVE' | 'REVOKED';
   sharingCodeHash: string;
+  locationSharing: boolean;
+  sosSharing: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+interface UpdateTrustedContactRequest {
+  safeWalkId: string;
+  locationSharing?: boolean;
+  sosSharing?: boolean;
 }
 
 interface SuccessResponse {
@@ -189,6 +197,8 @@ async function createTrustedContact(
     webhookUrl,
     status: 'ACTIVE',
     sharingCodeHash: hashSharingCode(sharingCode),
+    locationSharing: true,
+    sosSharing: true,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -207,7 +217,108 @@ async function createTrustedContact(
       requesterSafeWalkId: requester.safeWalkId,
       targetSafeWalkId,
       status: 'ACTIVE',
+      locationSharing: true,
+      sosSharing: true,
       createdAt: timestamp,
+    },
+  });
+}
+
+/**
+ * PATCH /contacts/{contactId}
+ *
+ * Updates locationSharing and/or sosSharing preferences for a trusted contact.
+ * The requesting user (identified by safeWalkId in the body) must be either
+ * the requester or target of the relationship.
+ */
+async function updateTrustedContact(
+  contactId: string,
+  body: UpdateTrustedContactRequest,
+  platformId: string
+): Promise<HandlerResponse> {
+  const { safeWalkId, locationSharing, sosSharing } = body;
+
+  if (!safeWalkId) {
+    return jsonResponse(400, {
+      error: 'Validation Error',
+      message: 'safeWalkId is required',
+    });
+  }
+
+  if (locationSharing === undefined && sosSharing === undefined) {
+    return jsonResponse(400, {
+      error: 'Validation Error',
+      message: 'At least one of locationSharing or sosSharing must be provided',
+    });
+  }
+
+  const existing = await ddbDocClient.send(
+    new GetCommand({
+      TableName: process.env.CONTACTS_TABLE_NAME!,
+      Key: { contactId },
+    })
+  );
+
+  if (!existing.Item) {
+    return jsonResponse(404, {
+      error: 'Not Found',
+      message: 'Trusted contact not found',
+    });
+  }
+
+  if (existing.Item.platformId !== platformId) {
+    return jsonResponse(403, {
+      error: 'Forbidden',
+      message: 'You can only update contacts created by your platform',
+    });
+  }
+
+  const { requesterSafeWalkId, targetSafeWalkId } = existing.Item as TrustedContactRecord;
+  if (safeWalkId !== requesterSafeWalkId && safeWalkId !== targetSafeWalkId) {
+    return jsonResponse(403, {
+      error: 'Forbidden',
+      message: 'The provided safeWalkId is not part of this contact relationship',
+    });
+  }
+
+  if (existing.Item.status === 'REVOKED') {
+    return jsonResponse(400, {
+      error: 'Bad Request',
+      message: 'Cannot update a revoked trusted contact',
+    });
+  }
+
+  const updateParts: string[] = ['updatedAt = :now'];
+  const expressionAttributeValues: Record<string, unknown> = {
+    ':now': new Date().toISOString(),
+  };
+
+  if (locationSharing !== undefined) {
+    updateParts.push('locationSharing = :ls');
+    expressionAttributeValues[':ls'] = locationSharing;
+  }
+
+  if (sosSharing !== undefined) {
+    updateParts.push('sosSharing = :ss');
+    expressionAttributeValues[':ss'] = sosSharing;
+  }
+
+  await ddbDocClient.send(
+    new UpdateCommand({
+      TableName: process.env.CONTACTS_TABLE_NAME!,
+      Key: { contactId },
+      UpdateExpression: `SET ${updateParts.join(', ')}`,
+      ExpressionAttributeValues: expressionAttributeValues,
+    })
+  );
+
+  return jsonResponse(200, {
+    success: true,
+    data: {
+      contactId,
+      locationSharing: locationSharing ?? existing.Item.locationSharing,
+      sosSharing: sosSharing ?? existing.Item.sosSharing,
+      updatedAt: expressionAttributeValues[':now'],
     },
   });
 }
@@ -370,6 +481,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<HandlerRes
         });
       }
       return await revokeTrustedContact(contactId, platformId);
+    }
+
+    if (method === 'PATCH' && rawPath.startsWith('/contacts/')) {
+      const contactId = event.pathParameters?.contactId;
+      if (!contactId) {
+        return jsonResponse(400, {
+          error: 'Validation Error',
+          message: 'contactId path parameter is required',
+        });
+      }
+      const body: UpdateTrustedContactRequest = JSON.parse(event.body || '{}');
+      return await updateTrustedContact(contactId, body, platformId);
     }
 
     return jsonResponse(404, {
