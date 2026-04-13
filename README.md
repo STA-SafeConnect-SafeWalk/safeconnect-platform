@@ -23,10 +23,10 @@ npm ci
 In order to use the contained CI/CD pipeline, make sure to deploy the ```pipeline-stack``` independently using the following command:
 
 ```sh
-cdk deploy -c githubOrg=YOUR_GITHUB_ORG -c githubRepo=YOUR_GITHUB_REPO
+cdk deploy safewalk-pipeline-stack -c githubOrg=YOUR_GITHUB_ORG -c githubRepo=YOUR_GITHUB_REPO -c githubAppRepo=YOUR_GITHUB_APP_REPO
 ```
 
-In case you deploy for the SafeWalk organisation, use the following: ```githubOrg=SafeWalk-Companion``` and ```githubRepo=safeconnect-platform```.
+In case you deploy for the SafeWalk organisation, use the following: ```githubOrg=SafeWalk-Companion```, ```githubAppRepo=safewalk-app``` and ```githubRepo=safeconnect-platform```.
 
 NOTE: This has to be done only ONCE by one team member, not individually.
 
