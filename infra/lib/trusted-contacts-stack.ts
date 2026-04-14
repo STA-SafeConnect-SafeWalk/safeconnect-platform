@@ -110,5 +110,11 @@ export class TrustedContactsStack extends cdk.Stack {
       methods: [apigateway.HttpMethod.DELETE],
       integration: trustedContactsIntegration,
     });
+
+    props.platformStack.addProtectedRoute('UpdateTrustedContactRoute', {
+      path: '/contacts/{contactId}',
+      methods: [apigateway.HttpMethod.PATCH],
+      integration: trustedContactsIntegration,
+    });
   }
 }

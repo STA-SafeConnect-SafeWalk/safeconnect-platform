@@ -1,11 +1,11 @@
-# SafeWalk Platform
-This repository contains the SafeWalk platform's business logic and infrastructure. The SafeWalk platform enables 3rd party public safety apps to securely exchange SOS events and therefore eliminate vendor-lockins for users concerned for their everyday safety. 
+# SafeConnect Platform
+This repository contains the SafeConnect platform's business logic and infrastructure. The SafeConnect platform enables 3rd party public safety apps to securely exchange SOS events and therefore eliminate vendor-lockins for users concerned for their everyday safety. 
 
 ## Setup
 In order to configure the platform for local development, follow the instructions given below.
 
 ### Deploy Infrastructure
-The infrastructure deployment requires a properly configured AWS account. Make sure the AWS CLI and CDK are authorised correctly using your preferred authentication flow (access keys recommended for local development only). 
+The infrastructure deployment requires a properly configured AWS account. Make sure the AWS CLI and Cloud Development Kit (CDK) are authorised correctly using your preferred authentication flow (access keys recommended for local development only). 
 
 #### Node Packages
 Install all required Node packages via ```npm ci ``` in the respective folders:
@@ -20,13 +20,18 @@ npm ci
 ```
 
 #### GitHub OIDC 
+To benefit from the [CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/getting-started.html), install it by using the following command:
+```sh
+sudo npm install -g aws-cdk
+```
+
 In order to use the contained CI/CD pipeline, make sure to deploy the ```pipeline-stack``` independently using the following command:
 
 ```sh
-cdk deploy -c githubOrg=YOUR_GITHUB_ORG -c githubRepo=YOUR_GITHUB_REPO
+cdk deploy safewalk-pipeline-stack -c githubOrg=YOUR_GITHUB_ORG -c githubRepo=YOUR_GITHUB_REPO -c githubAppRepo=YOUR_GITHUB_APP_REPO
 ```
 
-In case you deploy for the SafeWalk organisation, use the following: ```githubOrg=SafeWalk-Companion``` and ```githubRepo=safewalk-platform```.
+In case you deploy for the SafeWalk organisation, use the following: ```githubOrg=STA-SafeConnect-SafeWalk```, ```githubAppRepo=safewalk-app``` and ```githubRepo=safeconnect-platform```.
 
 NOTE: This has to be done only ONCE by one team member, not individually.
 
@@ -37,11 +42,11 @@ Once the above steps are completed, you may deploy the stacks to your AWS accoun
 cdk deploy --all
 ```
 
-## Platform Usage as a SW Admin
-The following section describes the SafeWalk Platform management as a designated administrator. 
+## Platform Usage as a SC Admin
+The following section describes the SafeConnect Platform management as a designated administrator. 
 
-### Authenticate as a SafeWalk Admin
-3rd party platform registrations can only be performed by SafeWalk admins. In order to authenticate as a SafeWalk admin follow these steps.
+### Authenticate as a SafeConnect Admin
+3rd party platform registrations can only be performed by SafeConnect admins. In order to authenticate as a SafeConnect admin follow these steps.
 
 #### Create your Admin Account
 Navigate to the ```safewalk-admin-user-pool``` in AWS Cognito and create a new user for yourself. Make sure to check 'Don't send an invitation' and 'Mark email address as verified'. 
