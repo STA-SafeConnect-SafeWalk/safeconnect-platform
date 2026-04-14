@@ -283,6 +283,10 @@ describe('trusted-contacts-handler', () => {
   });
 
   it('should list trusted contacts for a user (both directions)', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({
+      Item: { safeWalkId: 'user-1' },
+    });
+
     ddbMock.on(QueryCommand, { IndexName: 'RequesterIndex' }).resolves({
       Items: [
         {
@@ -340,6 +344,26 @@ describe('trusted-contacts-handler', () => {
     body.data.contacts.forEach((c: any) => {
       expect(c).not.toHaveProperty('sharingCodeHash');
     });
+  });
+
+  it('should return 404 when listing contacts for an unknown safeWalkId', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestUsers' }).resolves({ Item: undefined });
+
+    const event = buildEvent({
+      rawPath: '/contacts/unknown-user',
+      pathParameters: { safeWalkId: 'unknown-user' },
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'GET' },
+      },
+    });
+
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(404);
+
+    const body = JSON.parse(result.body as string);
+    expect(body.error).toBe('Not Found');
+    expect(body.message).toContain('safeWalkId');
   });
 
   it('should return 404 when contact does not exist', async () => {
