@@ -13,7 +13,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^24.10.1",
-    "aws-cdk": "2.1101.0",
+    "aws-cdk": "2.1118.0",
     "aws-sdk-client-mock": "^4.1.0",
     "aws-sdk-client-mock-jest": "^4.1.0",
     "jest": "^30.2.0",
