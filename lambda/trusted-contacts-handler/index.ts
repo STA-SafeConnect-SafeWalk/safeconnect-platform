@@ -185,6 +185,55 @@ async function createTrustedContact(
     });
   }
 
+  const revokedResult = await ddbDocClient.send(
+    new QueryCommand({
+      TableName: process.env.CONTACTS_TABLE_NAME!,
+      IndexName: 'RequesterIndex',
+      KeyConditionExpression: 'requesterSafeWalkId = :rid',
+      FilterExpression: 'targetSafeWalkId = :tid AND platformId = :pid AND #s = :revoked',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: {
+        ':rid': requester.safeWalkId,
+        ':tid': targetSafeWalkId,
+        ':pid': platformId,
+        ':revoked': 'REVOKED',
+      },
+    })
+  );
+
+  if (revokedResult.Items && revokedResult.Items.length > 0) {
+    const revokedContact = revokedResult.Items[0] as TrustedContactRecord;
+    const timestamp = new Date().toISOString();
+
+    await ddbDocClient.send(
+      new UpdateCommand({
+        TableName: process.env.CONTACTS_TABLE_NAME!,
+        Key: { contactId: revokedContact.contactId },
+        UpdateExpression: 'SET #s = :active, updatedAt = :now, sharingCodeHash = :hash REMOVE #ttl',
+        ExpressionAttributeNames: { '#s': 'status', '#ttl': 'ttl' },
+        ExpressionAttributeValues: {
+          ':active': 'ACTIVE',
+          ':now': timestamp,
+          ':hash': hashSharingCode(sharingCode),
+        },
+      })
+    );
+
+    return jsonResponse(200, {
+      success: true,
+      data: {
+        contactId: revokedContact.contactId,
+        requesterSafeWalkId: revokedContact.requesterSafeWalkId,
+        targetSafeWalkId: revokedContact.targetSafeWalkId,
+        status: 'ACTIVE',
+        locationSharing: revokedContact.locationSharing,
+        sosSharing: revokedContact.sosSharing,
+        createdAt: revokedContact.createdAt,
+        updatedAt: timestamp,
+      },
+    });
+  }
+
   const webhookUrl = await resolvePlatformWebhookUrl(platformId);
 
   const timestamp = new Date().toISOString();
@@ -460,22 +509,65 @@ async function revokeTrustedContact(
     });
   }
 
+  const ttl = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+  const now = new Date().toISOString();
+  const { requesterSafeWalkId, targetSafeWalkId } = existing.Item as TrustedContactRecord;
+
+  // Revoke the primary contact
   await ddbDocClient.send(
     new UpdateCommand({
       TableName: process.env.CONTACTS_TABLE_NAME!,
       Key: { contactId },
-      UpdateExpression: 'SET #s = :revoked, updatedAt = :now',
-      ExpressionAttributeNames: { '#s': 'status' },
+      UpdateExpression: 'SET #s = :revoked, updatedAt = :now, #ttl = :ttl',
+      ExpressionAttributeNames: { '#s': 'status', '#ttl': 'ttl' },
       ExpressionAttributeValues: {
         ':revoked': 'REVOKED',
-        ':now': new Date().toISOString(),
+        ':now': now,
+        ':ttl': ttl,
       },
     })
   );
 
+  // Find and revoke the reverse relationship (if it exists and is ACTIVE)
+  const reverseResult = await ddbDocClient.send(
+    new QueryCommand({
+      TableName: process.env.CONTACTS_TABLE_NAME!,
+      IndexName: 'RequesterIndex',
+      KeyConditionExpression: 'requesterSafeWalkId = :rid',
+      FilterExpression: 'targetSafeWalkId = :tid AND platformId = :pid AND #s = :active',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: {
+        ':rid': targetSafeWalkId,
+        ':tid': requesterSafeWalkId,
+        ':pid': platformId,
+        ':active': 'ACTIVE',
+      },
+    })
+  );
+
+  const revokedContactIds: string[] = [contactId];
+
+  if (reverseResult.Items && reverseResult.Items.length > 0) {
+    const reverseContact = reverseResult.Items[0];
+    await ddbDocClient.send(
+      new UpdateCommand({
+        TableName: process.env.CONTACTS_TABLE_NAME!,
+        Key: { contactId: reverseContact.contactId },
+        UpdateExpression: 'SET #s = :revoked, updatedAt = :now, #ttl = :ttl',
+        ExpressionAttributeNames: { '#s': 'status', '#ttl': 'ttl' },
+        ExpressionAttributeValues: {
+          ':revoked': 'REVOKED',
+          ':now': now,
+          ':ttl': ttl,
+        },
+      })
+    );
+    revokedContactIds.push(reverseContact.contactId as string);
+  }
+
   return jsonResponse(200, {
     success: true,
-    data: { contactId, status: 'REVOKED' },
+    data: { revokedContactIds, status: 'REVOKED' },
   });
 }
 
