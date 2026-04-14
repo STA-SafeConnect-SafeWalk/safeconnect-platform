@@ -5,7 +5,7 @@ This repository contains the SafeConnect platform's business logic and infrastru
 In order to configure the platform for local development, follow the instructions given below.
 
 ### Deploy Infrastructure
-The infrastructure deployment requires a properly configured AWS account. Make sure the AWS CLI and CDK are authorised correctly using your preferred authentication flow (access keys recommended for local development only). 
+The infrastructure deployment requires a properly configured AWS account. Make sure the AWS CLI and Cloud Development Kit (CDK) are authorised correctly using your preferred authentication flow (access keys recommended for local development only). 
 
 #### Node Packages
 Install all required Node packages via ```npm ci ``` in the respective folders:
@@ -20,6 +20,11 @@ npm ci
 ```
 
 #### GitHub OIDC 
+To benefit from the [CDK CLI](https://docs.aws.amazon.com/cdk/v2/guide/getting-started.html), install it by using the following command:
+```sh
+sudo npm install -g aws-cdk
+```
+
 In order to use the contained CI/CD pipeline, make sure to deploy the ```pipeline-stack``` independently using the following command:
 
 ```sh
