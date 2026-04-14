@@ -3,6 +3,7 @@ import {
   DynamoDBDocumentClient,
   PutCommand,
   GetCommand,
+  BatchGetCommand,
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
@@ -366,14 +367,46 @@ async function listTrustedContacts(
   );
 
   const contacts = [
-    ...(asRequester.Items ?? []).map((c) => ({ ...c, direction: 'outgoing' })),
-    ...(asTarget.Items ?? []).map((c) => ({ ...c, direction: 'incoming' })),
+    ...(asRequester.Items ?? []).map((c) => ({ ...c, direction: 'outgoing' as const })),
+    ...(asTarget.Items ?? []).map((c) => ({ ...c, direction: 'incoming' as const })),
   ];
 
-  // Strip internal fields before returning
+  // Collect the safeWalkIds of the *other* side of each relationship
+  const peerIds = new Set<string>();
+  for (const c of contacts) {
+    const peer = c.direction === 'outgoing'
+      ? (c as Record<string, unknown>).targetSafeWalkId
+      : (c as Record<string, unknown>).requesterSafeWalkId;
+    if (peer) peerIds.add(peer as string);
+  }
+
+  // Batch-fetch user records to resolve names
+  const nameMap = new Map<string, string | null>();
+  if (peerIds.size > 0) {
+    const keys = [...peerIds].map((id) => ({ safeWalkId: id }));
+    const batchResult = await ddbDocClient.send(
+      new BatchGetCommand({
+        RequestItems: {
+          [process.env.USERS_TABLE_NAME!]: {
+            Keys: keys,
+            ProjectionExpression: 'safeWalkId, #n',
+            ExpressionAttributeNames: { '#n': 'name' },
+          },
+        },
+      })
+    );
+    const items = batchResult.Responses?.[process.env.USERS_TABLE_NAME!] ?? [];
+    for (const item of items) {
+      nameMap.set(item.safeWalkId as string, (item.name as string) ?? null);
+    }
+  }
+
+  // Strip internal fields and attach peer name
   const sanitised = contacts.map((c) => {
-    const { sharingCodeHash, ...rest } = c as Record<string, unknown>;
-    return rest;
+    const rec = c as Record<string, unknown>;
+    const { sharingCodeHash, ...rest } = rec;
+    const peerId = (c.direction === 'outgoing' ? rec.targetSafeWalkId : rec.requesterSafeWalkId) as string;
+    return { ...rest, peerName: nameMap.get(peerId) ?? null };
   });
 
   return jsonResponse(200, {
