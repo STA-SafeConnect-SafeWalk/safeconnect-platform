@@ -3,6 +3,7 @@ import {
   DynamoDBDocumentClient,
   PutCommand,
   GetCommand,
+  BatchGetCommand,
   QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
@@ -321,6 +322,15 @@ describe('trusted-contacts-handler', () => {
       ],
     });
 
+    ddbMock.on(BatchGetCommand).resolves({
+      Responses: {
+        TestUsers: [
+          { safeWalkId: 'user-2', name: 'Alice' },
+          { safeWalkId: 'user-3', name: 'Bob' },
+        ],
+      },
+    });
+
     const event = buildEvent({
       rawPath: '/contacts/user-1',
       pathParameters: { safeWalkId: 'user-1' },
@@ -341,6 +351,10 @@ describe('trusted-contacts-handler', () => {
     const incoming = body.data.contacts.find((c: any) => c.direction === 'incoming');
     expect(outgoing.contactId).toBe('c-1');
     expect(incoming.contactId).toBe('c-2');
+
+    // peerName should be resolved from the users table
+    expect(outgoing.peerName).toBe('Alice');
+    expect(incoming.peerName).toBe('Bob');
 
     // sharingCodeHash should be stripped from the response
     body.data.contacts.forEach((c: any) => {
