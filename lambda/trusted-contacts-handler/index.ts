@@ -98,7 +98,7 @@ async function resolveUserBySafeWalkId(safeWalkId: string) {
       Key: { safeWalkId },
     })
   );
-  return result.Item ?? null;
+  return result?.Item ?? null;
 }
 
 async function resolvePlatformWebhookUrl(platformId: string): Promise<string | null> {
@@ -334,6 +334,14 @@ async function listTrustedContacts(
   safeWalkId: string,
   platformId: string
 ): Promise<HandlerResponse> {
+  const user = await resolveUserBySafeWalkId(safeWalkId);
+  if (!user) {
+    return jsonResponse(404, {
+      error: 'Not Found',
+      message: 'safeWalkId not found',
+    });
+  }
+
   // Contacts where user is the requester
   const asRequester = await ddbDocClient.send(
     new QueryCommand({
