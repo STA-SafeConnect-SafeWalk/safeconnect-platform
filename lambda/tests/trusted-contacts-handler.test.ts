@@ -106,6 +106,32 @@ describe('trusted-contacts-handler', () => {
     });
     const result = (await handler(event)) as APIGatewayProxyResult;
     expect(result.statusCode).toBe(400);
+    const body = JSON.parse(result.body as string);
+    expect(body.message).toContain('either sharingCode or targetSafeWalkId');
+  });
+
+  it('should return 404 if reverse-connect target safeWalkId does not exist', async () => {
+    ddbMock
+      .on(GetCommand, { TableName: 'TestUsers' })
+      .resolvesOnce({ Item: { safeWalkId: 'user-1', platformId: 'platform-abc' } })
+      .resolvesOnce({ Item: undefined });
+
+    const event = buildEvent({
+      rawPath: '/contacts',
+      body: JSON.stringify({
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+      }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'POST' },
+      },
+    });
+
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(404);
+    const body = JSON.parse(result.body as string);
+    expect(body.message).toContain('Target safeWalkId');
   });
 
   it('should return 404 if requester safeWalkId does not exist', async () => {
@@ -283,6 +309,96 @@ describe('trusted-contacts-handler', () => {
     });
     expect(item).toHaveProperty('sharingCodeHash');
     expect(item!.sharingCodeHash).not.toBe('TARGET'); // code is hashed, not stored raw
+  });
+
+  it('should successfully create a trusted contact via reverse-connect without sharingCode', async () => {
+    ddbMock
+      .on(GetCommand, { TableName: 'TestUsers' })
+      .resolvesOnce({ Item: { safeWalkId: 'user-1' } })
+      .resolvesOnce({ Item: { safeWalkId: 'user-2' } });
+
+    ddbMock.on(QueryCommand, { TableName: 'TestContacts' }).resolves({ Items: [] });
+    ddbMock.on(GetCommand, { TableName: 'TestPlatforms' }).resolves({
+      Item: { platformId: 'platform-abc', webhookUrl: 'https://example.com/webhook' },
+    });
+    ddbMock.on(PutCommand).resolves({});
+
+    const event = buildEvent({
+      rawPath: '/contacts',
+      body: JSON.stringify({
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+      }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'POST' },
+      },
+    });
+
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(201);
+
+    const body = JSON.parse(result.body as string);
+    expect(body.success).toBe(true);
+    expect(body.data.requesterSafeWalkId).toBe('user-1');
+    expect(body.data.targetSafeWalkId).toBe('user-2');
+
+    const putCalls = ddbMock.commandCalls(PutCommand);
+    expect(putCalls.length).toBe(1);
+    const item = putCalls[0].args[0].input.Item;
+    expect(item).not.toHaveProperty('sharingCodeHash');
+  });
+
+  it('should reactivate a revoked reverse contact and clear stale sharingCodeHash', async () => {
+    ddbMock
+      .on(GetCommand, { TableName: 'TestUsers' })
+      .resolvesOnce({ Item: { safeWalkId: 'user-1' } })
+      .resolvesOnce({ Item: { safeWalkId: 'user-2' } });
+
+    ddbMock
+      .on(QueryCommand, { TableName: 'TestContacts' })
+      .resolvesOnce({ Items: [] })
+      .resolvesOnce({
+        Items: [
+          {
+            contactId: 'c-revoked',
+            requesterSafeWalkId: 'user-1',
+            targetSafeWalkId: 'user-2',
+            platformId: 'platform-abc',
+            status: 'REVOKED',
+            sharingCodeHash: 'oldhash',
+            locationSharing: true,
+            sosSharing: true,
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      });
+
+    ddbMock.on(UpdateCommand).resolves({});
+
+    const event = buildEvent({
+      rawPath: '/contacts',
+      body: JSON.stringify({
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+      }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'POST' },
+      },
+    });
+
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body as string);
+    expect(body.success).toBe(true);
+
+    const updateCalls = ddbMock.commandCalls(UpdateCommand);
+    expect(updateCalls.length).toBe(1);
+    const input = updateCalls[0].args[0].input;
+    expect(input.UpdateExpression).toContain('REMOVE #ttl, #hash');
+    expect(input.UpdateExpression).not.toContain('#hash = :hash');
   });
 
   it('should list trusted contacts for a user (both directions)', async () => {
