@@ -14,8 +14,9 @@ const client = new DynamoDBClient({});
 const ddbDocClient = DynamoDBDocumentClient.from(client);
 
 interface CreateTrustedContactRequest {
-  requesterSafeWalkId: string;
-  sharingCode: string;
+  requesterSafeWalkId?: string;
+  sharingCode?: string;
+  targetSafeWalkId?: string;
 }
 
 interface TrustedContactRecord {
@@ -25,7 +26,7 @@ interface TrustedContactRecord {
   platformId: string;
   webhookUrl: string | null;
   status: 'ACTIVE' | 'REVOKED';
-  sharingCodeHash: string;
+  sharingCodeHash?: string;
   locationSharing: boolean;
   sosSharing: boolean;
   createdAt: string;
@@ -114,19 +115,22 @@ async function resolvePlatformWebhookUrl(platformId: string): Promise<string | n
 /**
  * POST /contacts
  *
- * A 3rd-party platform sends its user's safeWalkId together with the
- * sharing code of the person they want to add as a trusted contact.
+ * A 3rd-party platform sends its user's safeWalkId together with either:
+ * 1) a sharing code, or
+ * 2) a targetSafeWalkId for reverse-connect/share-back flows.
  */
 async function createTrustedContact(
   body: CreateTrustedContactRequest,
   platformId: string
 ): Promise<HandlerResponse> {
-  const { requesterSafeWalkId, sharingCode } = body;
+  const requesterSafeWalkId = body.requesterSafeWalkId?.trim();
+  const sharingCode = body.sharingCode?.trim();
+  const directTargetSafeWalkId = body.targetSafeWalkId?.trim();
 
-  if (!requesterSafeWalkId || !sharingCode) {
+  if (!requesterSafeWalkId || (!sharingCode && !directTargetSafeWalkId)) {
     return jsonResponse(400, {
       error: 'Validation Error',
-      message: 'requesterSafeWalkId and sharingCode are required',
+      message: 'requesterSafeWalkId and either sharingCode or targetSafeWalkId are required',
     });
   }
 
@@ -138,22 +142,37 @@ async function createTrustedContact(
     });
   }
 
-  const sharingCodeResult = await resolveSharingCode(sharingCode);
-  if (!sharingCodeResult) {
-    return jsonResponse(404, {
-      error: 'Not Found',
-      message: 'No user found for the provided sharing code',
-    });
-  }
+  let targetSafeWalkId: string;
+  let sharingCodeHash: string | undefined;
 
-  if (sharingCodeResult.expired) {
-    return jsonResponse(410, {
-      error: 'Gone',
-      message: 'The sharing code has expired. Please request a new one.',
-    });
-  }
+  if (directTargetSafeWalkId) {
+    const target = await resolveUserBySafeWalkId(directTargetSafeWalkId);
+    if (!target) {
+      return jsonResponse(404, {
+        error: 'Not Found',
+        message: 'Target safeWalkId not found',
+      });
+    }
+    targetSafeWalkId = target.safeWalkId;
+  } else {
+    const sharingCodeResult = await resolveSharingCode(sharingCode!);
+    if (!sharingCodeResult) {
+      return jsonResponse(404, {
+        error: 'Not Found',
+        message: 'No user found for the provided sharing code',
+      });
+    }
 
-  const targetSafeWalkId = sharingCodeResult.safeWalkId;
+    if (sharingCodeResult.expired) {
+      return jsonResponse(410, {
+        error: 'Gone',
+        message: 'The sharing code has expired. Please request a new one.',
+      });
+    }
+
+    targetSafeWalkId = sharingCodeResult.safeWalkId;
+    sharingCodeHash = hashSharingCode(sharingCode!);
+  }
 
   if (requester.safeWalkId === targetSafeWalkId) {
     return jsonResponse(400, {
@@ -205,17 +224,27 @@ async function createTrustedContact(
     const revokedContact = revokedResult.Items[0] as TrustedContactRecord;
     const timestamp = new Date().toISOString();
 
+    const updateParts = ['#s = :active', 'updatedAt = :now'];
+    const removeParts = ['#ttl'];
+    const expressionAttributeValues: Record<string, unknown> = {
+      ':active': 'ACTIVE',
+      ':now': timestamp,
+    };
+
+    if (sharingCodeHash) {
+      updateParts.push('#hash = :hash');
+      expressionAttributeValues[':hash'] = sharingCodeHash;
+    } else {
+      removeParts.push('#hash');
+    }
+
     await ddbDocClient.send(
       new UpdateCommand({
         TableName: process.env.CONTACTS_TABLE_NAME!,
         Key: { contactId: revokedContact.contactId },
-        UpdateExpression: 'SET #s = :active, updatedAt = :now, sharingCodeHash = :hash REMOVE #ttl',
-        ExpressionAttributeNames: { '#s': 'status', '#ttl': 'ttl' },
-        ExpressionAttributeValues: {
-          ':active': 'ACTIVE',
-          ':now': timestamp,
-          ':hash': hashSharingCode(sharingCode),
-        },
+        UpdateExpression: `SET ${updateParts.join(', ')} REMOVE ${removeParts.join(', ')}`,
+        ExpressionAttributeNames: { '#s': 'status', '#ttl': 'ttl', '#hash': 'sharingCodeHash' },
+        ExpressionAttributeValues: expressionAttributeValues,
       })
     );
 
@@ -246,7 +275,7 @@ async function createTrustedContact(
     platformId,
     webhookUrl,
     status: 'ACTIVE',
-    sharingCodeHash: hashSharingCode(sharingCode),
+    ...(sharingCodeHash ? { sharingCodeHash } : {}),
     locationSharing: true,
     sosSharing: true,
     createdAt: timestamp,
@@ -547,7 +576,7 @@ async function revokeTrustedContact(
 
   const revokedContactIds: string[] = [contactId];
 
-  if (reverseResult.Items && reverseResult.Items.length > 0) {
+  if (reverseResult?.Items && reverseResult.Items.length > 0) {
     const reverseContact = reverseResult.Items[0];
     await ddbDocClient.send(
       new UpdateCommand({
@@ -590,7 +619,24 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<HandlerRes
     const rawPath = event.rawPath;
 
     if (method === 'POST' && rawPath === '/contacts') {
-      const body: CreateTrustedContactRequest = JSON.parse(event.body || '{}');
+      const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'];
+      if (contentType && !contentType.toLowerCase().includes('application/json')) {
+        return jsonResponse(415, {
+          error: 'Unsupported Media Type',
+          message: 'Content-Type must be application/json',
+        });
+      }
+
+      let body: CreateTrustedContactRequest;
+      try {
+        body = JSON.parse(event.body || '{}');
+      } catch {
+        return jsonResponse(400, {
+          error: 'Validation Error',
+          message: 'Invalid JSON body',
+        });
+      }
+
       return await createTrustedContact(body, platformId);
     }
 

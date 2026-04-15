@@ -215,11 +215,25 @@ NOTE: Each new code generation replaces the previous one. Only the most recent c
 ### Create a Trusted Contact
 To add a trusted contact relationship for one of your users, send a ```POST``` request to ```safewalk-platform-stack.apiendpoint/contacts```
 
-The request body should contain:
+Headers:
+- `Content-Type: application/json`
+- `x-api-key: <your-platform-api-key>`
+
+The request body supports two shapes.
+
+1) Sharing-code connect (existing flow):
 ```json
 {
   "requesterSafeWalkId": "12345678-1234-1234-1234-1234abcd1234",
   "sharingCode": "ABCDEF"
+}
+```
+
+2) Reverse connect / share-back without sharing code:
+```json
+{
+  "requesterSafeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+  "targetSafeWalkId": "98765432-9876-9876-9876-9876fedc9876"
 }
 ```
 
@@ -237,10 +251,12 @@ Expect the following response on successful creation:
 }
 ```
 
-The `requesterSafeWalkId` is the SafeWalk ID of your user who wants to add a contact. The `sharingCode` is the code they received from the person they want to add as a trusted contact.
+The `requesterSafeWalkId` is the SafeWalk ID of your user who wants to add a contact.
+Use `sharingCode` for code-based connect, or `targetSafeWalkId` for reverse connect when a trusted-contact link is created from the other side and your user wants to share back location/SOS without exchanging a new sharing code.
 
 Possible error responses:
 - **404 Not Found** – The sharing code does not match any user.
+- **404 Not Found** – The target `safeWalkId` does not exist.
 - **410 Gone** – The sharing code has expired. The target user must generate a new one.
 - **400 Validation Error** – A user cannot add themselves as a trusted contact.
 - **409 Conflict** – This trusted contact relationship already exists.
