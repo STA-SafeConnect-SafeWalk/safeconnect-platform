@@ -4,6 +4,7 @@ import { UserStack } from '../lib/user-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { PlatformStack } from '../lib/platform-stack';
 import { TrustedContactsStack } from '../lib/trusted-contacts-stack';
+import { SOSStack } from '../lib/sos-stack';
 
 const app = new cdk.App();
 
@@ -47,7 +48,7 @@ const userStack = new UserStack(app, 'safewalk-platform-user-stack', {
   platformStack,
 });
 
-new TrustedContactsStack(app, 'safewalk-trusted-contacts-stack', {
+const trustedContactsStack = new TrustedContactsStack(app, 'safewalk-trusted-contacts-stack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: process.env.CDK_DEFAULT_REGION,
@@ -55,5 +56,16 @@ new TrustedContactsStack(app, 'safewalk-trusted-contacts-stack', {
   platformStack,
   usersTable: userStack.platformUsersTable,
   sharingCodesTable: userStack.sharingCodesTable,
+  platformsTableName: 'SafeWalkPlatforms',
+});
+
+new SOSStack(app, 'safewalk-sos-stack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION,
+  },
+  platformStack,
+  usersTable: userStack.platformUsersTable,
+  trustedContactsTable: trustedContactsStack.trustedContactsTable,
   platformsTableName: 'SafeWalkPlatforms',
 });

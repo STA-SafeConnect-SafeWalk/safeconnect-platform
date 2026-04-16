@@ -165,6 +165,13 @@ export class PlatformStack extends cdk.Stack {
       authorizer: adminAuthorizer,
     });
 
+    this.httpApi.addRoutes({
+      path: '/admin/platforms/{platformId}/regenerate-webhook-secret',
+      methods: [apigateway.HttpMethod.POST],
+      integration: adminIntegration,
+      authorizer: adminAuthorizer,
+    });
+
     new cdk.CfnOutput(this, 'api-endpoint', {
       value: this.httpApi.apiEndpoint,
       description: 'Central Platform API endpoint',
