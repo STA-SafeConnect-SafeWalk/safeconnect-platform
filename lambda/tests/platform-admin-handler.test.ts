@@ -64,6 +64,9 @@ describe('platform-admin-handler', () => {
       expect(data.platformName).toBe('Test App');
       expect(data.apiKey).toBeDefined();
       expect(data.apiKeyPrefix).toBeDefined();
+      expect(data.webhookSecret).toBeDefined();
+      expect(data.webhookSecret).toMatch(/^swsec_/);
+      expect(data.webhookSecretPrefix).toBeDefined();
 
       expect(ddbMock.commandCalls(PutCommand).length).toBe(1);
     });
@@ -109,13 +112,15 @@ describe('platform-admin-handler', () => {
   });
 
   describe('GET /admin/platforms/{id}', () => {
-    it('should return platform details without secret api key', async () => {
+    it('should return platform details without secret api key or webhook secret', async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
             platformId: 'p1',
             platformName: 'App 1',
             apiKey: 'secret',
             apiKeyPrefix: 'prefix...',
+            webhookSecret: 'swsec_secret',
+            webhookSecretPrefix: 'swsec_secret...',
         },
       });
 
@@ -127,6 +132,8 @@ describe('platform-admin-handler', () => {
       expect(data.platformId).toBe('p1');
       expect(data.apiKeyPrefix).toBe('prefix...');
       expect(data.apiKey).toBeUndefined(); // Should not return secret
+      expect(data.webhookSecret).toBeUndefined(); // Should not return secret
+      expect(data.webhookSecretPrefix).toBe('swsec_secret...');
     });
 
     it('should return 404 if not found', async () => {
@@ -182,6 +189,34 @@ describe('platform-admin-handler', () => {
         expect(data.message).toContain('regenerated');
         
         expect(ddbMock.commandCalls(UpdateCommand).length).toBe(1);
+      });
+  });
+
+  describe('POST /admin/platforms/{id}/regenerate-webhook-secret', () => {
+      it('should regenerate webhook secret', async () => {
+        ddbMock.on(GetCommand).resolves({ Item: { platformId: 'p1' } });
+        ddbMock.on(UpdateCommand).resolves({});
+
+        const event = generateEvent('POST', '/admin/platforms/p1/regenerate-webhook-secret', undefined, { platformId: 'p1' });
+        const result = (await handler(event)) as any;
+
+        expect(result.statusCode).toBe(200);
+        const data = JSON.parse(result.body).data;
+        expect(data.webhookSecret).toBeDefined();
+        expect(data.webhookSecret).toMatch(/^swsec_/);
+        expect(data.webhookSecretPrefix).toBeDefined();
+        expect(data.message).toContain('regenerated');
+        
+        expect(ddbMock.commandCalls(UpdateCommand).length).toBe(1);
+      });
+
+      it('should return 404 if platform not found', async () => {
+        ddbMock.on(GetCommand).resolves({});
+
+        const event = generateEvent('POST', '/admin/platforms/unknown/regenerate-webhook-secret', undefined, { platformId: 'unknown' });
+        const result = (await handler(event)) as any;
+
+        expect(result.statusCode).toBe(404);
       });
   });
 });

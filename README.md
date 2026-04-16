@@ -15,6 +15,8 @@ cd infra && npm ci
 cd lambda/platform-admin-handler && npm ci
 cd lambda/platform-authorizer && npm ci
 cd lambda/platform-user-handler && npm ci
+cd lambda/trusted-contacts-handler && npm ci
+cd lambda/sos-handler && npm ci
 cd lambda && npm ci
 npm ci
 ```
@@ -146,6 +148,8 @@ Note the data model used for 3rd party apps.
 | contactName | String | Primary contact name |
 | contactEmail | String | Primary contact email |
 | webhookUrl | String? | Optional webhook URL for events |
+| webhookSecret | String | Secret for webhook HMAC signing (format: `swsec_<64 hex chars>`) |
+| webhookSecretPrefix | String | First 14 chars for safe display |
 | description | String? | Optional description |
 | status | String | ACTIVE or INACTIVE |
 | createdAt | String | ISO timestamp |
@@ -319,3 +323,170 @@ Expect the following response:
 ```
 
 Note: You can only revoke contacts that were created by your platform. Attempting to revoke a contact from another platform will result in a 403 Forbidden error. 
+
+### SOS Events
+The SOS feature enables users to trigger emergency alerts that are forwarded to their trusted contacts' platforms via webhooks. Trusted contacts with `sosSharing: true` are automatically resolved and their companion platforms are notified.
+
+#### Trigger an SOS
+To trigger a new SOS event, send a `POST` request to `safewalk-platform-stack.apiendpoint/sos`
+
+```json
+{
+  "safeWalkId": "12345678-1234-1234-1234-1234abcd1234",
+  "geoLocation": {
+    "lat": 48.8566,
+    "lng": 2.3522,
+    "accuracy": 10
+  }
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "sosId": "sos-uuid",
+    "status": "ACTIVE",
+    "contactsNotified": 3,
+    "createdAt": "2026-04-15T..."
+  }
+}
+```
+
+Notes:
+- If the user already has an active SOS, it will be superseded and trusted contacts will be notified afresh.
+- The `accuracy` field is optional (meters).
+- SOS records are automatically deleted after **30 days** (GDPR compliance via DynamoDB TTL).
+
+#### Update SOS Location
+To send a location update for an active SOS, send a `PATCH` request to `safewalk-platform-stack.apiendpoint/sos/{sosId}`
+
+```json
+{
+  "geoLocation": {
+    "lat": 48.8584,
+    "lng": 2.2945,
+    "accuracy": 5
+  }
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "sosId": "sos-uuid",
+    "status": "ACTIVE",
+    "contactsNotified": 3,
+    "latestGeoLocation": { "lat": 48.8584, "lng": 2.2945, "accuracy": 5 },
+    "updatedAt": "2026-04-15T..."
+  }
+}
+```
+
+Location updates trigger `SOS_LOCATION_UPDATE` webhooks (NOT `SOS_CREATED`). Each location update is persisted in a separate audit table for full location history.
+
+#### Cancel an SOS
+To cancel an active SOS, send a `DELETE` request to `safewalk-platform-stack.apiendpoint/sos/{sosId}`
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "sosId": "sos-uuid",
+    "status": "CANCELLED",
+    "contactsNotified": 3,
+    "updatedAt": "2026-04-15T..."
+  }
+}
+```
+
+Cancellations trigger `SOS_CANCELLED` webhooks to all trusted contacts' platforms.
+
+#### Webhook Payload
+Companion platforms receive signed webhook payloads at their configured `webhookUrl`. There are three event types:
+
+| Event | Description |
+|-------|-------------|
+| `SOS_CREATED` | New SOS triggered — includes geo location |
+| `SOS_LOCATION_UPDATE` | Location update for active SOS — includes updated geo location |
+| `SOS_CANCELLED` | SOS cancelled — no geo location |
+
+Payload structure:
+```json
+{
+  "type": "SOS_CREATED",
+  "sosId": "sos-uuid",
+  "timestamp": "2026-04-15T...",
+  "victim": {
+    "safeWalkId": "victim-safewalk-id",
+    "platformId": "victim-platform-id",
+    "platformUserId": "victim-platform-user-id",
+    "displayName": "Victim Name"
+  },
+  "targets": [
+    {
+      "safeWalkId": "target-safewalk-id",
+      "platformId": "your-platform-id",
+      "platformUserId": "target-platform-user-id"
+    }
+  ],
+  "geoLocation": {
+    "lat": 48.8566,
+    "lng": 2.3522,
+    "accuracy": 10,
+    "timestamp": "2026-04-15T..."
+  }
+}
+```
+
+The `targets` array is filtered to only include users belonging to the receiving platform. The `geoLocation` field is omitted on `SOS_CANCELLED` events.
+
+#### Webhook Signature Verification
+Each webhook request includes HMAC-SHA256 signatures for authenticity verification. Use the `webhookSecret` provided at platform registration to verify.
+
+Headers:
+- `X-SafeWalk-Signature`: `sha256=<hex digest>`
+- `X-SafeWalk-Timestamp`: ISO 8601 timestamp
+- `X-SafeWalk-Event`: Event type (`SOS_CREATED`, `SOS_LOCATION_UPDATE`, `SOS_CANCELLED`)
+
+To verify:
+1. Concatenate `<X-SafeWalk-Timestamp>.<raw request body>` (with a dot separator)
+2. Compute HMAC-SHA256 using your `webhookSecret`
+3. Compare the hex digest with the value after `sha256=` in `X-SafeWalk-Signature`
+
+Example (Node.js):
+```js
+const crypto = require('crypto');
+
+function verifyWebhook(body, timestamp, signature, secret) {
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${timestamp}.${body}`)
+    .digest('hex');
+  return signature === `sha256=${expected}`;
+}
+```
+
+#### Regenerate Webhook Secret
+If your webhook secret is compromised, an admin can regenerate it by sending a `POST` request to `safewalk-platform-stack.apiendpoint/admin/platforms/{platformId}/regenerate-webhook-secret`
+
+The new secret is returned once and will not be shown again.
+
+#### SOS Data Model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| sosId | String | Unique identifier (UUID) |
+| victimSafeWalkId | String | SafeWalk ID of the user in distress |
+| victimPlatformId | String | Platform ID of the victim's platform |
+| victimPlatformUserId | String | Platform-specific user ID of the victim |
+| victimDisplayName | String | Display name of the victim |
+| status | String | ACTIVE, CANCELLED, or SUPERSEDED |
+| latestGeoLocation | Object | Most recent geo location `{ lat, lng, accuracy? }` |
+| createdAt | String | ISO timestamp |
+| updatedAt | String | ISO timestamp |
+| ttl | Number | Unix epoch for GDPR auto-deletion (30 days) |

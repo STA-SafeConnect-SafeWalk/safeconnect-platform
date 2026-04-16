@@ -37,6 +37,8 @@ interface PlatformRecord {
   platformName: string;
   apiKey: string;
   apiKeyPrefix: string;
+  webhookSecret: string;
+  webhookSecretPrefix: string;
   redirectUrl: string;
   contactName: string;
   contactEmail: string;
@@ -64,6 +66,15 @@ function generateApiKey(): string {
 
 function getApiKeyPrefix(apiKey: string): string {
   return apiKey.substring(0, 11) + '...';
+}
+
+function generateWebhookSecret(): string {
+  const randomPart = randomBytes(32).toString('hex');
+  return `swsec_${randomPart}`;
+}
+
+function getWebhookSecretPrefix(secret: string): string {
+  return secret.substring(0, 14) + '...';
 }
 
 function isValidEmail(email: string): boolean {
@@ -131,6 +142,7 @@ async function registerPlatform(
 
   const platformId = randomUUID();
   const apiKey = generateApiKey();
+  const webhookSecret = generateWebhookSecret();
   const timestamp = new Date().toISOString();
 
   const platformRecord: PlatformRecord = {
@@ -138,6 +150,8 @@ async function registerPlatform(
     platformName,
     apiKey,
     apiKeyPrefix: getApiKeyPrefix(apiKey),
+    webhookSecret,
+    webhookSecretPrefix: getWebhookSecretPrefix(webhookSecret),
     redirectUrl,
     contactName,
     contactEmail,
@@ -165,6 +179,8 @@ async function registerPlatform(
         platformName,
         apiKey,
         apiKeyPrefix: getApiKeyPrefix(apiKey),
+        webhookSecret,
+        webhookSecretPrefix: getWebhookSecretPrefix(webhookSecret),
         redirectUrl,
         status: 'ACTIVE',
         createdAt: timestamp,
@@ -194,7 +210,7 @@ async function getPlatform(
     };
   }
 
-  const { apiKey, ...platformData } = result.Item;
+  const { apiKey, webhookSecret, ...platformData } = result.Item;
 
   return {
     statusCode: 200,
@@ -404,6 +420,58 @@ async function regenerateApiKey(
   };
 }
 
+async function regenerateWebhookSecret(
+  platformId: string
+): Promise<APIGatewayProxyResultV2<SuccessResponse | ErrorResponse>> {
+  const existing = await ddbDocClient.send(
+    new GetCommand({
+      TableName: process.env.PLATFORMS_TABLE_NAME!,
+      Key: { platformId },
+    })
+  );
+
+  if (!existing.Item) {
+    return {
+      statusCode: 404,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: 'Not Found',
+        message: 'Platform not found',
+      }),
+    };
+  }
+
+  const newSecret = generateWebhookSecret();
+  const timestamp = new Date().toISOString();
+
+  await ddbDocClient.send(
+    new UpdateCommand({
+      TableName: process.env.PLATFORMS_TABLE_NAME!,
+      Key: { platformId },
+      UpdateExpression: 'SET webhookSecret = :secret, webhookSecretPrefix = :prefix, updatedAt = :updatedAt',
+      ExpressionAttributeValues: {
+        ':secret': newSecret,
+        ':prefix': getWebhookSecretPrefix(newSecret),
+        ':updatedAt': timestamp,
+      },
+    })
+  );
+
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      success: true,
+      data: {
+        platformId,
+        webhookSecret: newSecret,
+        webhookSecretPrefix: getWebhookSecretPrefix(newSecret),
+        message: 'Webhook secret regenerated successfully. Store this secret securely - it will not be shown again.',
+      },
+    }),
+  };
+}
+
 
 export const handler = async (
   event: APIGatewayProxyEventV2
@@ -435,6 +503,10 @@ export const handler = async (
 
     if (method === 'POST' && path.endsWith('/regenerate-key') && platformId) {
       return regenerateApiKey(platformId);
+    }
+
+    if (method === 'POST' && path.endsWith('/regenerate-webhook-secret') && platformId) {
+      return regenerateWebhookSecret(platformId);
     }
 
     return {
