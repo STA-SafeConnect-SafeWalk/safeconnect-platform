@@ -23,11 +23,11 @@ interface GeoLocation {
 
 interface CreateSOSRequest {
   safeWalkId: string;
-  geoLocation: GeoLocation;
+  geoLocation?: GeoLocation;
 }
 
 interface UpdateSOSRequest {
-  geoLocation: GeoLocation;
+  geoLocation?: GeoLocation;
 }
 
 interface SuccessResponse {
@@ -249,7 +249,7 @@ async function createSOS(
     });
   }
 
-  if (!isValidGeoLocation(geoLocation)) {
+  if (geoLocation !== undefined && !isValidGeoLocation(geoLocation)) {
     return jsonResponse(400, {
       error: 'Validation Error',
       message: 'Valid geoLocation with lat (-90 to 90) and lng (-180 to 180) is required',
@@ -323,31 +323,38 @@ async function createSOS(
     victimPlatformUserId: victim.Item.platformUserId as string,
     victimDisplayName: (victim.Item.name as string) || 'Unknown',
     status: 'ACTIVE',
-    latestGeoLocation: geoLocation,
+    ...(geoLocation !== undefined && { latestGeoLocation: geoLocation }),
     createdAt: timestamp,
     updatedAt: timestamp,
     ttl,
   };
 
-  await Promise.all([
+  const putCommands: Promise<unknown>[] = [
     ddbDocClient.send(
       new PutCommand({
         TableName: process.env.SOS_EVENTS_TABLE_NAME!,
         Item: sosRecord,
       }),
     ),
-    ddbDocClient.send(
-      new PutCommand({
-        TableName: process.env.SOS_LOCATION_AUDIT_TABLE_NAME!,
-        Item: {
-          sosId,
-          timestamp,
-          geoLocation,
-          ttl,
-        },
-      }),
-    ),
-  ]);
+  ];
+
+  if (geoLocation !== undefined) {
+    putCommands.push(
+      ddbDocClient.send(
+        new PutCommand({
+          TableName: process.env.SOS_LOCATION_AUDIT_TABLE_NAME!,
+          Item: {
+            sosId,
+            timestamp,
+            geoLocation,
+            ttl,
+          },
+        }),
+      ),
+    );
+  }
+
+  await Promise.all(putCommands);
 
   // Resolve trusted contacts and deliver webhooks
   const contacts = await resolveSOSContacts(safeWalkId);
@@ -386,7 +393,7 @@ async function createSOS(
         displayName: (victim.Item.name as string) || 'Unknown',
       },
       targets: [],
-      geoLocation: { ...geoLocation, timestamp },
+      ...(geoLocation !== undefined && { geoLocation: { ...geoLocation, timestamp } }),
     };
 
     contactsNotified = await deliverWebhooks(payload, platformWebhooks, allTargets);
@@ -412,7 +419,7 @@ async function updateSOSLocation(
   body: UpdateSOSRequest,
   platformId: string,
 ): Promise<HandlerResponse> {
-  if (!isValidGeoLocation(body.geoLocation)) {
+  if (body.geoLocation !== undefined && !isValidGeoLocation(body.geoLocation)) {
     return jsonResponse(400, {
       error: 'Validation Error',
       message: 'Valid geoLocation with lat (-90 to 90) and lng (-180 to 180) is required',
@@ -451,30 +458,41 @@ async function updateSOSLocation(
   const timestamp = now.toISOString();
 
   // Update SOS record and append location audit entry in parallel
-  await Promise.all([
-    ddbDocClient.send(
+  if (body.geoLocation !== undefined) {
+    await Promise.all([
+      ddbDocClient.send(
+        new UpdateCommand({
+          TableName: process.env.SOS_EVENTS_TABLE_NAME!,
+          Key: { sosId },
+          UpdateExpression: 'SET latestGeoLocation = :geo, updatedAt = :now',
+          ExpressionAttributeValues: {
+            ':geo': body.geoLocation,
+            ':now': timestamp,
+          },
+        }),
+      ),
+      ddbDocClient.send(
+        new PutCommand({
+          TableName: process.env.SOS_LOCATION_AUDIT_TABLE_NAME!,
+          Item: {
+            sosId,
+            timestamp,
+            geoLocation: body.geoLocation,
+            ttl: existing.Item.ttl,
+          },
+        }),
+      ),
+    ]);
+  } else {
+    await ddbDocClient.send(
       new UpdateCommand({
         TableName: process.env.SOS_EVENTS_TABLE_NAME!,
         Key: { sosId },
-        UpdateExpression: 'SET latestGeoLocation = :geo, updatedAt = :now',
-        ExpressionAttributeValues: {
-          ':geo': body.geoLocation,
-          ':now': timestamp,
-        },
+        UpdateExpression: 'SET updatedAt = :now',
+        ExpressionAttributeValues: { ':now': timestamp },
       }),
-    ),
-    ddbDocClient.send(
-      new PutCommand({
-        TableName: process.env.SOS_LOCATION_AUDIT_TABLE_NAME!,
-        Item: {
-          sosId,
-          timestamp,
-          geoLocation: body.geoLocation,
-          ttl: existing.Item.ttl,
-        },
-      }),
-    ),
-  ]);
+    );
+  }
 
   const contacts = await resolveSOSContacts(existing.Item.victimSafeWalkId as string);
 
@@ -512,7 +530,7 @@ async function updateSOSLocation(
         displayName: existing.Item.victimDisplayName as string,
       },
       targets: [],
-      geoLocation: { ...body.geoLocation, timestamp },
+      ...(body.geoLocation !== undefined && { geoLocation: { ...body.geoLocation, timestamp } }),
     };
 
     contactsNotified = await deliverWebhooks(payload, platformWebhooks, allTargets);
@@ -524,7 +542,7 @@ async function updateSOSLocation(
       sosId,
       status: 'ACTIVE',
       contactsNotified,
-      latestGeoLocation: body.geoLocation,
+      ...(body.geoLocation !== undefined && { latestGeoLocation: body.geoLocation }),
       updatedAt: timestamp,
     },
   });

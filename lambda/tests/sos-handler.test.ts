@@ -181,12 +181,21 @@ describe('sos-handler', () => {
       expect(JSON.parse(result.body).message).toContain('lat');
     });
 
-    it('should return 400 for missing geoLocation', async () => {
+    it('should create SOS without geoLocation', async () => {
+      ddbMock.on(GetCommand, { TableName: 'UsersTable', Key: { safeWalkId: 'victim-sw-id' } })
+        .resolves({ Item: mockVictimUser });
+      ddbMock.on(QueryCommand, { TableName: 'SOSEventsTable' }).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(QueryCommand, { TableName: 'ContactsTable', IndexName: 'RequesterIndex' }).resolves({ Items: [] });
+
       const event = generateEvent('POST', '/sos', {
         safeWalkId: 'victim-sw-id',
       });
       const result = (await handler(event)) as any;
-      expect(result.statusCode).toBe(400);
+      expect(result.statusCode).toBe(201);
+      // Only the SOS event PutCommand is issued (no location audit)
+      expect(ddbMock.commandCalls(PutCommand).length).toBe(1);
+      expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.TableName).toBe('SOSEventsTable');
     });
 
     it('should return 404 if user not found', async () => {
@@ -437,6 +446,21 @@ describe('sos-handler', () => {
 
       const result = (await handler(event)) as any;
       expect(result.statusCode).toBe(400);
+    });
+
+    it('should update SOS without geoLocation (updatedAt only)', async () => {
+      ddbMock.on(GetCommand, { TableName: 'SOSEventsTable' }).resolves({ Item: mockSOSEvent });
+      ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(QueryCommand, { TableName: 'ContactsTable', IndexName: 'RequesterIndex' })
+        .resolves({ Items: [] });
+
+      const event = generateEvent('PATCH', '/sos/sos-123', {}, { sosId: 'sos-123' });
+      const result = (await handler(event)) as any;
+
+      expect(result.statusCode).toBe(200);
+      // Only one UpdateCommand (updatedAt), no PutCommand to audit table
+      expect(ddbMock.commandCalls(UpdateCommand).length).toBe(1);
+      expect(ddbMock.commandCalls(PutCommand).length).toBe(0);
     });
   });
 
