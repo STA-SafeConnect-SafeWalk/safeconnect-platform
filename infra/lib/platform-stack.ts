@@ -69,14 +69,13 @@ export class PlatformStack extends cdk.Stack {
         authorizerName: 'platform-api-key-authorizer',
         responseTypes: [apigatewayAuthorizers.HttpLambdaResponseType.SIMPLE],
         identitySource: ['$request.header.x-api-key'],
-        resultsCacheTtl: cdk.Duration.minutes(5), // Cache authorization results for 5 minutes
+        resultsCacheTtl: cdk.Duration.minutes(5),
       }
     );
 
-    // Cognito User Pool for Admins
     const adminUserPool = new cognito.UserPool(this, 'admin-user-pool', {
       userPoolName: 'safewalk-admin-user-pool',
-      selfSignUpEnabled: false, // Only admins can create other admins
+      selfSignUpEnabled: false,
       signInAliases: { email: true },
       autoVerify: { email: true },
       passwordPolicy: {

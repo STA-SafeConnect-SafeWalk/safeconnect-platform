@@ -8,6 +8,11 @@ import { SOSStack } from '../lib/sos-stack';
 
 const app = new cdk.App();
 
+const env = {
+  account: process.env.CDK_DEFAULT_ACCOUNT,
+  region: process.env.CDK_DEFAULT_REGION,
+};
+
 const githubOrg = app.node.tryGetContext('githubOrg') || process.env.GITHUB_ORG;
 const githubAppRepo = app.node.tryGetContext('githubAppRepo') || process.env.GITHUB_APP_REPO;
 const githubPlatformRepo = app.node.tryGetContext('githubPlatformRepo') || process.env.GITHUB_PLATFORM_REPO;
@@ -24,35 +29,23 @@ if (githubOrg && githubAppRepo && githubPlatformRepo) {
     githubOrg,
     githubAppRepo,
     githubPlatformRepo,
-    env: {
-      account: process.env.CDK_DEFAULT_ACCOUNT,
-      region: process.env.CDK_DEFAULT_REGION,
-    },
+    env,
     description: 'GitHub Actions OIDC authentication and deployment role',
   });
 }
 
 const platformStack = new PlatformStack(app, 'safewalk-platform-stack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
-  },
+  env,
   description: 'Platform registration and central API Gateway with custom authorizer',
 });
 
 const userStack = new UserStack(app, 'safewalk-platform-user-stack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
-  },
+  env,
   platformStack,
 });
 
 const trustedContactsStack = new TrustedContactsStack(app, 'safewalk-trusted-contacts-stack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
-  },
+  env,
   platformStack,
   usersTable: userStack.platformUsersTable,
   sharingCodesTable: userStack.sharingCodesTable,
@@ -60,10 +53,7 @@ const trustedContactsStack = new TrustedContactsStack(app, 'safewalk-trusted-con
 });
 
 new SOSStack(app, 'safewalk-sos-stack', {
-  env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
-  },
+  env,
   platformStack,
   usersTable: userStack.platformUsersTable,
   trustedContactsTable: trustedContactsStack.trustedContactsTable,
