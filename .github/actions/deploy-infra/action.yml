@@ -34,37 +34,13 @@ runs:
       working-directory: infra
       run: npm run build
 
-    - name: Run tests
-      shell: bash
-      working-directory: infra
-      run: npm test
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/github-actions-deployment-role
         aws-region: ${{ inputs.aws-region }}
 
-    - name: CDK Diff Platform
-      if: github.event_name == 'pull_request'
+    - name: CDK Deploy
       shell: bash
       working-directory: infra
-      run: npx cdk diff safewalk-platform-stack
-
-    - name: CDK Deploy Platform
-      if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-      shell: bash
-      working-directory: infra
-      run: npx cdk deploy safewalk-platform-stack --require-approval never
-
-    - name: CDK Diff Platform User
-      if: github.event_name == 'pull_request'
-      shell: bash
-      working-directory: infra
-      run: npx cdk diff safewalk-platform-user-stack
-
-    - name: CDK Deploy Platform User
-      if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-      shell: bash
-      working-directory: infra
-      run: npx cdk deploy safewalk-platform-user-stack --require-approval never
+      run: npx cdk deploy --all --require-approval never

@@ -88,7 +88,6 @@ export class TrustedContactsStack extends cdk.Stack {
     props.sharingCodesTable.grantReadData(trustedContactsHandler);
     platformsTableRef.grantReadData(trustedContactsHandler);
 
-
     const trustedContactsIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'trusted-contacts-integration',
       trustedContactsHandler
