@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 
@@ -230,6 +230,70 @@ async function generateSharingCodeForUser(
   });
 }
 
+interface UpdateUserNameRequest {
+  name: string;
+}
+
+/**
+ * PATCH /users/{safeWalkId}
+ *
+ * Updates the display name of a platform user.
+ * The requesting platform must own the user (platformId must match).
+ */
+async function updateUserName(
+  safeWalkId: string,
+  body: UpdateUserNameRequest,
+  platformId: string
+): Promise<HandlerResponse> {
+  const { name } = body;
+
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return jsonResponse(400, {
+      error: 'Validation Error',
+      message: 'name is required and must be a non-empty string',
+    });
+  }
+
+  const userResult = await ddbDocClient.send(
+    new GetCommand({
+      TableName: process.env.TABLE_NAME!,
+      Key: { safeWalkId },
+    })
+  );
+
+  if (!userResult.Item) {
+    return jsonResponse(404, {
+      error: 'Not Found',
+      message: 'User not found',
+    });
+  }
+
+  if (userResult.Item.platformId !== platformId) {
+    return jsonResponse(403, {
+      error: 'Forbidden',
+      message: 'User does not belong to your platform',
+    });
+  }
+
+  await ddbDocClient.send(
+    new UpdateCommand({
+      TableName: process.env.TABLE_NAME!,
+      Key: { safeWalkId },
+      UpdateExpression: 'SET #n = :name, updatedAt = :updatedAt',
+      ExpressionAttributeNames: { '#n': 'name' },
+      ExpressionAttributeValues: {
+        ':name': name.trim(),
+        ':updatedAt': new Date().toISOString(),
+      },
+    })
+  );
+
+  return jsonResponse(200, {
+    success: true,
+    data: { safeWalkId, name: name.trim() },
+  });
+}
+
 /**
  * Lambda handler – routes requests to the appropriate function.
  */
@@ -259,6 +323,14 @@ export const handler = async (
     if (method === 'POST' && rawPath === '/sharing-codes') {
       const body: GenerateSharingCodeRequest = JSON.parse(event.body || '{}');
       return await generateSharingCodeForUser(body, platformId);
+    }
+
+    // PATCH /users/{safeWalkId} — update display name
+    const patchUsersMatch = method === 'PATCH' && rawPath.match(/^\/users\/([^/]+)$/);
+    if (patchUsersMatch) {
+      const safeWalkIdParam = decodeURIComponent(patchUsersMatch[1]);
+      const body: UpdateUserNameRequest = JSON.parse(event.body || '{}');
+      return await updateUserName(safeWalkIdParam, body, platformId);
     }
 
     return jsonResponse(404, {

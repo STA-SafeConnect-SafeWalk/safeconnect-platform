@@ -99,6 +99,12 @@ export class UserStack extends cdk.Stack {
       integration: lambdaIntegration,
     });
 
+    props.platformStack.addProtectedRoute('UpdateUserNameRoute', {
+      path: '/users/{safeWalkId}',
+      methods: [apigateway.HttpMethod.PATCH],
+      integration: lambdaIntegration,
+    });
+
     new cdk.CfnOutput(this, 'table-name', {
       value: this.platformUsersTable.tableName,
       description: 'DynamoDB table name',
