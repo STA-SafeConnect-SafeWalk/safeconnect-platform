@@ -746,7 +746,7 @@ describe('trusted-contacts-handler', () => {
     expect(input.UpdateExpression).toContain('sosSharing');
   });
 
-  it('PATCH: should allow target user to update the contact', async () => {
+  it('PATCH: should update the reverse contact when safeWalkId is the target user', async () => {
     ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
       Item: {
         contactId: 'c-1',
@@ -757,6 +757,19 @@ describe('trusted-contacts-handler', () => {
         locationSharing: true,
         sosSharing: true,
       },
+    });
+    ddbMock.on(QueryCommand, { TableName: 'TestContacts' }).resolves({
+      Items: [
+        {
+          contactId: 'c-2',
+          platformId: 'platform-abc',
+          requesterSafeWalkId: 'user-2',
+          targetSafeWalkId: 'user-1',
+          status: 'ACTIVE',
+          locationSharing: false,
+          sosSharing: true,
+        },
+      ],
     });
     ddbMock.on(UpdateCommand).resolves({});
 
@@ -772,7 +785,42 @@ describe('trusted-contacts-handler', () => {
     const result = (await handler(event)) as APIGatewayProxyResult;
     expect(result.statusCode).toBe(200);
     const body = JSON.parse(result.body as string);
+    expect(body.data.contactId).toBe('c-2');
     expect(body.data.sosSharing).toBe(false);
-    expect(body.data.locationSharing).toBe(true); 
+    expect(body.data.locationSharing).toBe(false);
+
+    const updateCalls = ddbMock.commandCalls(UpdateCommand);
+    expect(updateCalls.length).toBe(1);
+    expect(updateCalls[0].args[0].input.Key).toEqual({ contactId: 'c-2' });
+  });
+
+  it('PATCH: should return 404 when target user has no requester-side connection to update', async () => {
+    ddbMock.on(GetCommand, { TableName: 'TestContacts' }).resolves({
+      Item: {
+        contactId: 'c-1',
+        platformId: 'platform-abc',
+        requesterSafeWalkId: 'user-1',
+        targetSafeWalkId: 'user-2',
+        status: 'ACTIVE',
+        locationSharing: true,
+        sosSharing: true,
+      },
+    });
+    ddbMock.on(QueryCommand, { TableName: 'TestContacts' }).resolves({ Items: [] });
+
+    const event = buildEvent({
+      rawPath: '/contacts/c-1',
+      pathParameters: { contactId: 'c-1' },
+      body: JSON.stringify({ safeWalkId: 'user-2', sosSharing: false }),
+      requestContext: {
+        ...mockPlatformContext.requestContext,
+        http: { method: 'PATCH' },
+      },
+    });
+    const result = (await handler(event)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(404);
+
+    const updateCalls = ddbMock.commandCalls(UpdateCommand);
+    expect(updateCalls.length).toBe(0);
   });
 });

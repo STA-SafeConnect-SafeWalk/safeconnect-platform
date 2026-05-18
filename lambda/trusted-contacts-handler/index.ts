@@ -352,7 +352,8 @@ async function updateTrustedContact(
     });
   }
 
-  const { requesterSafeWalkId, targetSafeWalkId } = existing.Item as TrustedContactRecord;
+  const initialContact = existing.Item as TrustedContactRecord;
+  const { requesterSafeWalkId, targetSafeWalkId } = initialContact;
   if (safeWalkId !== requesterSafeWalkId && safeWalkId !== targetSafeWalkId) {
     return jsonResponse(403, {
       error: 'Forbidden',
@@ -360,11 +361,45 @@ async function updateTrustedContact(
     });
   }
 
-  if (existing.Item.status === 'REVOKED') {
+  if (initialContact.status === 'REVOKED') {
     return jsonResponse(400, {
       error: 'Bad Request',
       message: 'Cannot update a revoked trusted contact',
     });
+  }
+
+  let contactToUpdate = initialContact;
+
+  if (safeWalkId !== requesterSafeWalkId) {
+    const reverseResult = await ddbDocClient.send(
+      new QueryCommand({
+        TableName: process.env.CONTACTS_TABLE_NAME!,
+        IndexName: 'RequesterIndex',
+        KeyConditionExpression: 'requesterSafeWalkId = :rid',
+        FilterExpression: 'targetSafeWalkId = :tid AND platformId = :pid',
+        ExpressionAttributeValues: {
+          ':rid': safeWalkId,
+          ':tid': requesterSafeWalkId,
+          ':pid': platformId,
+        },
+      })
+    );
+
+    if (!reverseResult?.Items || reverseResult.Items.length === 0) {
+      return jsonResponse(404, {
+        error: 'Not Found',
+        message: 'Trusted contact where the provided safeWalkId is the requester was not found',
+      });
+    }
+
+    contactToUpdate = reverseResult.Items[0] as TrustedContactRecord;
+
+    if (contactToUpdate.status === 'REVOKED') {
+      return jsonResponse(400, {
+        error: 'Bad Request',
+        message: 'Cannot update a revoked trusted contact',
+      });
+    }
   }
 
   const updateParts: string[] = ['updatedAt = :now'];
@@ -385,7 +420,7 @@ async function updateTrustedContact(
   await ddbDocClient.send(
     new UpdateCommand({
       TableName: process.env.CONTACTS_TABLE_NAME!,
-      Key: { contactId },
+      Key: { contactId: contactToUpdate.contactId },
       UpdateExpression: `SET ${updateParts.join(', ')}`,
       ExpressionAttributeValues: expressionAttributeValues,
     })
@@ -394,9 +429,9 @@ async function updateTrustedContact(
   return jsonResponse(200, {
     success: true,
     data: {
-      contactId,
-      locationSharing: locationSharing ?? existing.Item.locationSharing,
-      sosSharing: sosSharing ?? existing.Item.sosSharing,
+      contactId: contactToUpdate.contactId,
+      locationSharing: locationSharing ?? contactToUpdate.locationSharing,
+      sosSharing: sosSharing ?? contactToUpdate.sosSharing,
       updatedAt: expressionAttributeValues[':now'],
     },
   });
