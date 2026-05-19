@@ -17,6 +17,7 @@ export interface UserStackProps extends cdk.StackProps {
 export class UserStack extends cdk.Stack {
   public readonly platformUsersTable: dynamodb.Table;
   public readonly sharingCodesTable: dynamodb.Table;
+  private readonly userProfileHandler: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: UserStackProps) {
     super(scope, id, props);
@@ -65,13 +66,7 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    const trustedContactsTableRef = dynamodb.Table.fromTableName(
-      this,
-      'TrustedContactsTableRef',
-      'SafeWalkTrustedContacts',
-    );
-
-    const userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
+    this.userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
       functionName: 'platform-user-handler',
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'index.handler',
@@ -79,20 +74,19 @@ export class UserStack extends cdk.Stack {
       environment: {
         TABLE_NAME: this.platformUsersTable.tableName,
         SHARING_CODES_TABLE_NAME: this.sharingCodesTable.tableName,
-        CONTACTS_TABLE_NAME: trustedContactsTableRef.tableName,
+        CONTACTS_TABLE_NAME: 'SafeWalkTrustedContacts',
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
       logRetention: RetentionDays.ONE_WEEK,
     });
 
-    this.platformUsersTable.grantReadWriteData(userProfileHandler);
-    this.sharingCodesTable.grantReadWriteData(userProfileHandler);
-    trustedContactsTableRef.grantReadWriteData(userProfileHandler);
+    this.platformUsersTable.grantReadWriteData(this.userProfileHandler);
+    this.sharingCodesTable.grantReadWriteData(this.userProfileHandler);
 
     const lambdaIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'platform-user-profile-integration',
-      userProfileHandler
+      this.userProfileHandler
     );
 
     props.platformStack.addProtectedRoute('RegisterUserRoute', {
@@ -130,8 +124,12 @@ export class UserStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'lambda-function-name', {
-      value: userProfileHandler.functionName,
+      value: this.userProfileHandler.functionName,
       description: 'Platform user profile handler Lambda function name',
     });
+  }
+
+  public addTrustedContactsPermissions(contactsTable: dynamodb.ITable): void {
+    contactsTable.grantReadWriteData(this.userProfileHandler);
   }
 }
