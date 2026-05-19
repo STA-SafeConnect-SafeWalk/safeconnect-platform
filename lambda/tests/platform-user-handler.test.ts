@@ -1,5 +1,5 @@
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { APIGatewayProxyResult } from 'aws-lambda';
 import { handler } from '../platform-user-handler/index';
 
@@ -24,6 +24,7 @@ describe('platform-user-handler', () => {
     process.env = { ...originalEnv };
     process.env.TABLE_NAME = 'TestTable';
     process.env.SHARING_CODES_TABLE_NAME = 'TestSharingCodes';
+    process.env.CONTACTS_TABLE_NAME = 'TestContacts';
   });
 
   afterAll(() => {
@@ -284,5 +285,128 @@ describe('platform-user-handler', () => {
 
     const result = (await handler(event as any)) as APIGatewayProxyResult;
     expect(result.statusCode).toBe(404);
+  });
+
+  // --- Delete user tests ---
+
+  it('should return 404 when deleting a non-existent user', async () => {
+    ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+    const event = {
+      ...mockContext,
+      requestContext: { ...mockContext.requestContext, http: { method: 'DELETE' } },
+      rawPath: '/users/non-existent',
+    };
+
+    const result = (await handler(event as any)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(404);
+  });
+
+  it('should return 403 when deleting a user from another platform', async () => {
+    ddbMock.on(GetCommand).resolves({
+      Item: { safeWalkId: 'user-1', platformId: 'other-platform' },
+    });
+
+    const event = {
+      ...mockContext,
+      requestContext: { ...mockContext.requestContext, http: { method: 'DELETE' } },
+      rawPath: '/users/user-1',
+    };
+
+    const result = (await handler(event as any)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(403);
+  });
+
+  it('should delete a user with no trusted contacts', async () => {
+    ddbMock.on(GetCommand).resolves({
+      Item: { safeWalkId: 'user-1', platformId: 'platform-abc' },
+    });
+    ddbMock.on(QueryCommand).resolves({ Items: [] });
+    ddbMock.on(DeleteCommand).resolves({});
+
+    const event = {
+      ...mockContext,
+      requestContext: { ...mockContext.requestContext, http: { method: 'DELETE' } },
+      rawPath: '/users/user-1',
+    };
+
+    const result = (await handler(event as any)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body as string);
+    expect(body.success).toBe(true);
+    expect(body.data.safeWalkId).toBe('user-1');
+    expect(body.data.deletedTrustedContactCount).toBe(0);
+
+    // Should issue one DeleteCommand for the user only
+    const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+    expect(deleteCalls.length).toBe(1);
+    expect(deleteCalls[0].args[0].input.Key).toEqual({ safeWalkId: 'user-1' });
+  });
+
+  it('should delete a user and their trusted contacts where they are requester', async () => {
+    ddbMock.on(GetCommand).resolves({
+      Item: { safeWalkId: 'user-1', platformId: 'platform-abc' },
+    });
+    ddbMock.on(QueryCommand).callsFake((input) => {
+      if (input.IndexName === 'RequesterIndex') {
+        return { Items: [{ contactId: 'contact-1' }] };
+      }
+      return { Items: [] };
+    });
+    ddbMock.on(DeleteCommand).resolves({});
+
+    const event = {
+      ...mockContext,
+      requestContext: { ...mockContext.requestContext, http: { method: 'DELETE' } },
+      rawPath: '/users/user-1',
+    };
+
+    const result = (await handler(event as any)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body as string);
+    expect(body.data.deletedTrustedContactCount).toBe(1);
+
+    const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+    expect(deleteCalls.length).toBe(2);
+
+    // Verify deletions: user record + contact record
+    const deletedKeys = deleteCalls.map((c) => c.args[0].input.Key);
+    expect(deletedKeys).toContainEqual({ safeWalkId: 'user-1' });
+    expect(deletedKeys).toContainEqual({ contactId: 'contact-1' });
+  });
+
+  it('should delete a user and their trusted contacts (both requester and target)', async () => {
+    ddbMock.on(GetCommand).resolves({
+      Item: { safeWalkId: 'user-1', platformId: 'platform-abc' },
+    });
+    ddbMock.on(QueryCommand).callsFake((input) => {
+      if (input.IndexName === 'RequesterIndex') {
+        return { Items: [{ contactId: 'contact-1' }] };
+      }
+      if (input.IndexName === 'TargetIndex') {
+        return { Items: [{ contactId: 'contact-2' }] };
+      }
+      return { Items: [] };
+    });
+    ddbMock.on(DeleteCommand).resolves({});
+
+    const event = {
+      ...mockContext,
+      requestContext: { ...mockContext.requestContext, http: { method: 'DELETE' } },
+      rawPath: '/users/user-1',
+    };
+
+    const result = (await handler(event as any)) as APIGatewayProxyResult;
+    expect(result.statusCode).toBe(200);
+    const body = JSON.parse(result.body as string);
+    expect(body.data.deletedTrustedContactCount).toBe(2);
+
+    const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+    expect(deleteCalls.length).toBe(3);
+
+    const deletedKeys = deleteCalls.map((c) => c.args[0].input.Key);
+    expect(deletedKeys).toContainEqual({ safeWalkId: 'user-1' });
+    expect(deletedKeys).toContainEqual({ contactId: 'contact-1' });
+    expect(deletedKeys).toContainEqual({ contactId: 'contact-2' });
   });
 });

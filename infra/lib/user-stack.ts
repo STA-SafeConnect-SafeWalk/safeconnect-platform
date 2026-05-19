@@ -65,6 +65,12 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    const trustedContactsTableRef = dynamodb.Table.fromTableName(
+      this,
+      'TrustedContactsTableRef',
+      'SafeWalkTrustedContacts',
+    );
+
     const userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
       functionName: 'platform-user-handler',
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -73,6 +79,7 @@ export class UserStack extends cdk.Stack {
       environment: {
         TABLE_NAME: this.platformUsersTable.tableName,
         SHARING_CODES_TABLE_NAME: this.sharingCodesTable.tableName,
+        CONTACTS_TABLE_NAME: trustedContactsTableRef.tableName,
       },
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
@@ -81,6 +88,7 @@ export class UserStack extends cdk.Stack {
 
     this.platformUsersTable.grantReadWriteData(userProfileHandler);
     this.sharingCodesTable.grantReadWriteData(userProfileHandler);
+    trustedContactsTableRef.grantReadWriteData(userProfileHandler);
 
     const lambdaIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'platform-user-profile-integration',
@@ -102,6 +110,12 @@ export class UserStack extends cdk.Stack {
     props.platformStack.addProtectedRoute('UpdateUserNameRoute', {
       path: '/users/{safeWalkId}',
       methods: [apigateway.HttpMethod.PATCH],
+      integration: lambdaIntegration,
+    });
+
+    props.platformStack.addProtectedRoute('DeleteUserRoute', {
+      path: '/users/{safeWalkId}',
+      methods: [apigateway.HttpMethod.DELETE],
       integration: lambdaIntegration,
     });
 

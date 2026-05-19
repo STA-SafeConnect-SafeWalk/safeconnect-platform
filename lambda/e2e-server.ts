@@ -6,6 +6,7 @@ import {
   GetCommand,
   QueryCommand,
   UpdateCommand,
+  DeleteCommand,
   ScanCommand,
   BatchGetCommand,
 } from '@aws-sdk/lib-dynamodb';
@@ -70,6 +71,14 @@ class InMemoryDB {
     if (rm) for (const f of rm[1].split(',').map((s) => s.trim())) delete item[ean?.[f] ?? f];
   }
 
+  delete(tableName: string, key: Record<string, unknown>): void {
+    const s = TABLE_SCHEMAS[tableName];
+    if (!s) throw new Error(`Unknown table: ${tableName}`);
+    const items = this.getTable(tableName);
+    const idx = items.findIndex((i) => s.sortKey ? i[s.partitionKey] === key[s.partitionKey] && i[s.sortKey] === key[s.sortKey] : i[s.partitionKey] === key[s.partitionKey]);
+    if (idx >= 0) items.splice(idx, 1);
+  }
+
   private parseConds(expr: string, vals: Record<string, unknown>, names?: Record<string, string>) {
     const c: Array<{ field: string; value: unknown }> = [];
     for (const p of expr.split(/\s+AND\s+/i)) { const m = p.trim().match(/^([\w#]+)\s*=\s*(:\w+)$/); if (m) c.push({ field: names?.[m[1]] ?? m[1], value: vals[m[2]] }); }
@@ -88,6 +97,7 @@ ddbMock.on(BatchGetCommand).callsFake((input: any) => ({ Responses: db.batchGet(
 ddbMock.on(QueryCommand).callsFake((input: any) => { const i = db.query(input.TableName, input.KeyConditionExpression, input.ExpressionAttributeValues, input.FilterExpression, input.ExpressionAttributeNames, input.Limit); return { Items: i, Count: i.length }; });
 ddbMock.on(ScanCommand).callsFake((input: any) => { const i = db.scan(input.TableName); return { Items: i, Count: i.length }; });
 ddbMock.on(UpdateCommand).callsFake((input: any) => { db.update(input.TableName, input.Key, input.UpdateExpression, input.ExpressionAttributeValues, input.ExpressionAttributeNames); return {}; });
+ddbMock.on(DeleteCommand).callsFake((input: any) => { db.delete(input.TableName, input.Key); return {}; });
 
 // ---- Environment ----
 
@@ -122,6 +132,8 @@ function matchRoute(method: string, p: string): RouteMatch | null {
   if (m && method === 'POST') return { handler: 'admin', pathParams: { platformId: m[1] } };
   if (method === 'POST' && p === '/register') return { handler: 'user', pathParams: {} };
   if (method === 'POST' && p === '/sharing-codes') return { handler: 'user', pathParams: {} };
+  m = p.match(/^\/users\/([^/]+)$/);
+  if (m && method === 'DELETE') return { handler: 'user', pathParams: { safeWalkId: m[1] } };
   if (method === 'POST' && p === '/contacts') return { handler: 'contacts', pathParams: {} };
   m = p.match(/^\/contacts\/([^/]+)$/);
   if (m && method === 'GET') return { handler: 'contacts', pathParams: { safeWalkId: m[1] } };

@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 
@@ -295,6 +295,85 @@ async function updateUserName(
 }
 
 /**
+ * DELETE /users/{safeWalkId}
+ *
+ * Deletes a platform user and all their trusted contact relationships.
+ * The requesting platform must own the user (platformId must match).
+ */
+async function deleteUser(safeWalkId: string, platformId: string): Promise<HandlerResponse> {
+  const userResult = await ddbDocClient.send(
+    new GetCommand({
+      TableName: process.env.TABLE_NAME!,
+      Key: { safeWalkId },
+    })
+  );
+
+  if (!userResult.Item) {
+    return jsonResponse(404, {
+      error: 'Not Found',
+      message: 'User not found',
+    });
+  }
+
+  if (userResult.Item.platformId !== platformId) {
+    return jsonResponse(403, {
+      error: 'Forbidden',
+      message: 'User does not belong to your platform',
+    });
+  }
+
+  const [asRequester, asTarget] = await Promise.all([
+    ddbDocClient.send(
+      new QueryCommand({
+        TableName: process.env.CONTACTS_TABLE_NAME!,
+        IndexName: 'RequesterIndex',
+        KeyConditionExpression: 'requesterSafeWalkId = :id',
+        ExpressionAttributeValues: { ':id': safeWalkId },
+      })
+    ),
+    ddbDocClient.send(
+      new QueryCommand({
+        TableName: process.env.CONTACTS_TABLE_NAME!,
+        IndexName: 'TargetIndex',
+        KeyConditionExpression: 'targetSafeWalkId = :id',
+        ExpressionAttributeValues: { ':id': safeWalkId },
+      })
+    ),
+  ]);
+
+  const contactIds = [
+    ...(asRequester.Items ?? []).map((c) => c.contactId as string),
+    ...(asTarget.Items ?? []).map((c) => c.contactId as string),
+  ];
+
+  await ddbDocClient.send(
+    new DeleteCommand({
+      TableName: process.env.TABLE_NAME!,
+      Key: { safeWalkId },
+    })
+  );
+
+  await Promise.all(
+    contactIds.map((contactId) =>
+      ddbDocClient.send(
+        new DeleteCommand({
+          TableName: process.env.CONTACTS_TABLE_NAME!,
+          Key: { contactId },
+        })
+      )
+    )
+  );
+
+  return jsonResponse(200, {
+    success: true,
+    data: {
+      safeWalkId,
+      deletedTrustedContactCount: contactIds.length,
+    },
+  });
+}
+
+/**
  * Lambda handler – routes requests to the appropriate function.
  */
 export const handler = async (
@@ -331,6 +410,13 @@ export const handler = async (
       const safeWalkIdParam = decodeURIComponent(patchUsersMatch[1]);
       const body: UpdateUserNameRequest = JSON.parse(event.body || '{}');
       return await updateUserName(safeWalkIdParam, body, platformId);
+    }
+
+    // DELETE /users/{safeWalkId} — delete user and trusted contacts
+    const deleteUsersMatch = method === 'DELETE' && rawPath.match(/^\/users\/([^/]+)$/);
+    if (deleteUsersMatch) {
+      const safeWalkIdParam = decodeURIComponent(deleteUsersMatch[1]);
+      return await deleteUser(safeWalkIdParam, platformId);
     }
 
     return jsonResponse(404, {
