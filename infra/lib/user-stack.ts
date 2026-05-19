@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib/core';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigatewayIntegrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -17,7 +18,6 @@ export interface UserStackProps extends cdk.StackProps {
 export class UserStack extends cdk.Stack {
   public readonly platformUsersTable: dynamodb.Table;
   public readonly sharingCodesTable: dynamodb.Table;
-  private readonly userProfileHandler: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: UserStackProps) {
     super(scope, id, props);
@@ -66,7 +66,7 @@ export class UserStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    this.userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
+    const userProfileHandler = new NodejsFunction(this, 'platform-user-handler', {
       functionName: 'platform-user-handler',
       runtime: lambda.Runtime.NODEJS_24_X,
       handler: 'index.handler',
@@ -81,12 +81,27 @@ export class UserStack extends cdk.Stack {
       logRetention: RetentionDays.ONE_WEEK,
     });
 
-    this.platformUsersTable.grantReadWriteData(this.userProfileHandler);
-    this.sharingCodesTable.grantReadWriteData(this.userProfileHandler);
+    this.platformUsersTable.grantReadWriteData(userProfileHandler);
+    this.sharingCodesTable.grantReadWriteData(userProfileHandler);
+
+    userProfileHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:Query',
+          'dynamodb:DeleteItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${this.region}:${this.account}:table/SafeWalkTrustedContacts`,
+          `arn:aws:dynamodb:${this.region}:${this.account}:table/SafeWalkTrustedContacts/index/*`,
+        ],
+      })
+    );
 
     const lambdaIntegration = new apigatewayIntegrations.HttpLambdaIntegration(
       'platform-user-profile-integration',
-      this.userProfileHandler
+      userProfileHandler
     );
 
     props.platformStack.addProtectedRoute('RegisterUserRoute', {
@@ -124,12 +139,8 @@ export class UserStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'lambda-function-name', {
-      value: this.userProfileHandler.functionName,
+      value: userProfileHandler.functionName,
       description: 'Platform user profile handler Lambda function name',
     });
-  }
-
-  public addTrustedContactsPermissions(contactsTable: dynamodb.ITable): void {
-    contactsTable.grantReadWriteData(this.userProfileHandler);
   }
 }

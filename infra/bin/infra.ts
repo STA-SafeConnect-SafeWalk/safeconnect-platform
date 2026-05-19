@@ -52,8 +52,6 @@ const trustedContactsStack = new TrustedContactsStack(app, 'safewalk-trusted-con
   platformsTableName: 'SafeWalkPlatforms',
 });
 
-userStack.addTrustedContactsPermissions(trustedContactsStack.trustedContactsTable);
-
 new SOSStack(app, 'safewalk-sos-stack', {
   env,
   platformStack,
